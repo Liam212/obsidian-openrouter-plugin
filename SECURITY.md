@@ -47,6 +47,8 @@ Mobile selects the native transport before sending, requests non-streaming respo
 
 Model selection is explicit; missing/filtered models cannot fall through to the first option. Free inference labels require known zero pricing, excluding dynamic routers except the explicit free router. Web search is blocked in free-only mode. Advertised pricing can change, and cancellation does not guarantee upstream work or charges stop immediately. Configure an appropriate key credit limit with your provider.
 
+Displayed costs use only finite, nonnegative numeric `usage.cost` values supplied by OpenRouter. Missing/invalid values remain unknown, not zero. Streaming usage totals replace earlier totals instead of being added together. Cost is displayed only after successful completion and is discarded with a cancelled, cleared, or closed request. It is not a billing ledger: upstream work may incur charges for failed/cancelled requests, and separate BYOK provider bills are excluded. No additional network endpoint or stored history is introduced for cost reporting.
+
 Responses and SSE events are size-limited before parsing, malformed/truncated streams are rejected, and failed or partial exchanges are not retained as conversation context. On mobile, the host buffers the full HTTP response before returning it, so the plugin's size check cannot bound the native download or its buffering allocation. Output token limits bound requested response length; provider context/rate limits still apply.
 
 ## Dependency controls

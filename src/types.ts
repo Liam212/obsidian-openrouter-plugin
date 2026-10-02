@@ -30,6 +30,7 @@ export interface Completion {
   totalMs: number;
   firstTokenMs: number | null;
   completionTokens: number | null;
+  costUsd: number | null;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

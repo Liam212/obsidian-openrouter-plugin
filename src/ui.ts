@@ -1,6 +1,7 @@
 import type { OpenRouterClient } from './api';
 import { filterModels, modelLabel } from './models';
 import type { Settings } from './types';
+import { costDescription, formatCost } from './cost';
 
 export interface PluginHost {
   settings: Settings;
@@ -25,6 +26,18 @@ export function button(parent: Node, text: string, cls: string, callback: () => 
   return node;
 }
 
+export function renderCost(parent: Node, cost: number | null): HTMLElement {
+  const label = element(parent, 'span', 'openrouter-response-cost', formatCost(cost));
+  label.title = costDescription(cost);
+  return label;
+}
+
+interface ModelPickerOptions {
+  compact?: boolean;
+  controlsParent?: HTMLElement;
+  onUnavailable?: () => void;
+}
+
 export class ModelPicker {
   readonly select: HTMLSelectElement;
   readonly search: HTMLInputElement;
@@ -35,14 +48,16 @@ export class ModelPicker {
   private destroyed = false;
   private disabled = false;
   private refreshing = false;
+  private priceHint: HTMLElement | undefined;
 
-  constructor(parent: HTMLElement, private host: PluginHost, onChange?: (model: string) => void) {
+  constructor(parent: HTMLElement, private host: PluginHost, onChange?: (model: string) => void, private options: ModelPickerOptions = {}) {
     this.selection = host.settings.defaultModel;
     const wrapper = element(parent, 'div', 'openrouter-picker');
-    const label = element(wrapper, 'label', 'openrouter-model-label', 'Model');
+    const label = element(wrapper, 'label', 'openrouter-model-label', options.compact ? '' : 'Model');
     this.select = element(label, 'select', 'openrouter-model-select');
     this.select.setAttribute('aria-label', 'Model');
-    const filters = element(wrapper, 'div', 'openrouter-model-filter');
+    const controls = options.controlsParent ?? wrapper;
+    const filters = element(controls, 'div', 'openrouter-model-filter');
     this.search = element(filters, 'input', 'openrouter-model-search');
     this.search.type = 'search';
     this.search.placeholder = 'Search models…';
@@ -53,8 +68,10 @@ export class ModelPicker {
     this.freeOnly.checked = host.settings.showFreeModelsOnly;
     freeLabel.append('Free inference only');
     this.refreshButton = button(filters, 'Refresh models', 'openrouter-refresh-button', () => { void this.refresh(); });
+    if (options.compact) this.priceHint = element(controls, 'p', 'openrouter-privacy-hint openrouter-model-pricing');
     this.select.addEventListener('change', () => {
       this.selection = this.select.value;
+      this.updatePrice();
       onChange?.(this.selection);
     });
     this.search.addEventListener('input', () => this.render());
@@ -99,11 +116,21 @@ export class ModelPicker {
         group.label = model.provider;
         groups.set(model.provider, group);
       }
-      const option = element(group, 'option', '', modelLabel(model));
+      const option = element(group, 'option', '', this.options.compact ? model.name : modelLabel(model));
       option.value = model.id;
     }
     // No implicit first option and no resetting to the default on each render.
     this.select.value = models.some(model => model.id === this.selection) ? this.selection : '';
+    this.updatePrice();
+    if (!this.select.value) this.options.onUnavailable?.();
+  }
+
+  private updatePrice(): void {
+    const model = this.host.settings.cachedModels.find(item => item.id === this.select.value);
+    this.select.title = model ? modelLabel(model) : 'Choose an available model';
+    if (this.priceHint) this.priceHint.textContent = model
+      ? `Catalog pricing: ${modelLabel(model)}. Actual cost depends on usage and host; reported after the response.`
+      : 'Choose a model. Catalog rates are estimates; the response shows the reported request cost.';
   }
 
   setDisabled(disabled: boolean): void {

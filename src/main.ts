@@ -115,7 +115,7 @@ export default class OpenRouterPlugin extends Plugin {
     try {
       const workspace = this.app.workspace;
       const existing = workspace.getLeavesOfType(VIEW_TYPE)[0];
-      const leaf = existing ?? workspace.getRightLeaf(false) ?? workspace.getLeaf('split');
+      const leaf = existing ?? (Platform.isMobileApp ? workspace.getLeaf('tab') : workspace.getRightLeaf(false) ?? workspace.getLeaf('split'));
       if (!existing) await leaf.setViewState({ type: VIEW_TYPE, active: true });
       await leaf.loadIfDeferred();
       if (this.stopped) return null;

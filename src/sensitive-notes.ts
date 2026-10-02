@@ -9,16 +9,18 @@ export class SensitiveNotesControl {
   private active: boolean;
   private busy = false;
   private locked = false;
+  private status: HTMLElement | undefined;
 
-  constructor(parent: HTMLElement, enabled: boolean, onChange: () => void = () => undefined) {
+  constructor(parent: HTMLElement, enabled: boolean, onChange: () => void = () => undefined, descriptionParent?: HTMLElement) {
     this.active = enabled;
     const container = element(parent, 'div', 'openrouter-sensitive-notes');
     const label = element(container, 'label', 'openrouter-sensitive-label');
     this.checkbox = element(label, 'input');
     this.checkbox.type = 'checkbox';
     this.checkbox.checked = enabled;
-    label.append('Sensitive notes (require ZDR)');
-    this.description = element(container, 'p', 'openrouter-privacy-hint');
+    label.append(descriptionParent ? 'Sensitive notes' : 'Sensitive notes (require ZDR)');
+    if (descriptionParent) this.status = element(container, 'span', 'openrouter-sensitive-status');
+    this.description = element(descriptionParent ?? container, 'p', 'openrouter-privacy-hint');
     this.description.id = `openrouter-sensitive-description-${nextDescriptionId++}`;
     this.description.setAttribute('aria-live', 'polite');
     this.checkbox.setAttribute('aria-describedby', this.description.id);
@@ -44,6 +46,10 @@ export class SensitiveNotesControl {
   private render(): void {
     this.checkbox.checked = this.active;
     this.checkbox.disabled = this.busy || this.locked;
+    if (this.status) {
+      this.status.textContent = this.locked ? 'ZDR on · Clear chat to turn off' : this.active ? 'ZDR required' : '';
+      this.status.hidden = !this.active;
+    }
     this.description.textContent = this.locked
       ? 'Clear chat before turning this off: follow-ups include sensitive history. Requests require ZDR and disable web search and response caching.'
       : this.active

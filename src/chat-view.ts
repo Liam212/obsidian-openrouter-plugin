@@ -2,11 +2,13 @@ import { ItemView, Notice, type WorkspaceLeaf } from 'obsidian';
 import { errorMessage, isAbort } from './api';
 import { Conversation } from './conversation';
 import { renderMessage } from './render';
-import { button, element, ModelPicker, type PluginHost } from './ui';
+import { button, element, ModelPicker, renderCost, type PluginHost } from './ui';
+import { costDescription } from './cost';
 import type { Completion } from './types';
 import { SensitiveNotesControl } from './sensitive-notes';
 
 export const VIEW_TYPE = 'openrouter-chat-view';
+let nextOptionsId = 0;
 
 export class ChatView extends ItemView {
   private conversation: Conversation;
@@ -17,6 +19,7 @@ export class ChatView extends ItemView {
   private stopButton!: HTMLButtonElement;
   private sensitiveNotes!: SensitiveNotesControl;
   private webSearch!: HTMLInputElement;
+  private optionsButton!: HTMLButtonElement;
   private epoch = 0;
   private closed = false;
   private activeResponse: HTMLElement | null = null;
@@ -37,10 +40,23 @@ export class ChatView extends ItemView {
     this.contentEl.replaceChildren();
     this.contentEl.classList.add('openrouter-chat-container');
     const header = element(this.contentEl, 'div', 'openrouter-chat-header');
-    element(header, 'h3', '', 'OpenRouter Chat');
-    this.picker = new ModelPicker(header, this.host);
-    this.sensitiveNotes = new SensitiveNotesControl(header, this.host.settings.sensitiveNotesByDefault, () => this.updatePrivacyControls());
-    const searchLabel = element(header, 'label', 'openrouter-websearch-label');
+    const modelRow = element(header, 'div');
+    const toolbar = element(header, 'div', 'openrouter-chat-toolbar');
+    const privacyControl = element(toolbar, 'div');
+    const options = element(header, 'div', 'openrouter-chat-options');
+    options.id = `openrouter-chat-options-${nextOptionsId++}`;
+    const setOptionsOpen = (open: boolean) => {
+      options.hidden = !open;
+      this.optionsButton.setAttribute('aria-expanded', String(open));
+    };
+    this.optionsButton = button(toolbar, 'Options', 'openrouter-options-button', () => setOptionsOpen(options.hidden));
+    this.optionsButton.setAttribute('aria-controls', options.id);
+    setOptionsOpen(false);
+    this.picker = new ModelPicker(modelRow, this.host, undefined, {
+      compact: true, controlsParent: options, onUnavailable: () => setOptionsOpen(true)
+    });
+    this.sensitiveNotes = new SensitiveNotesControl(privacyControl, this.host.settings.sensitiveNotesByDefault, () => this.updatePrivacyControls(), options);
+    const searchLabel = element(options, 'label', 'openrouter-websearch-label');
     const webSearch = element(searchLabel, 'input');
     this.webSearch = webSearch;
     webSearch.type = 'checkbox';
@@ -58,10 +74,12 @@ export class ChatView extends ItemView {
       }
       this.host.settings.useWebSearch = webSearch.checked;
       void this.host.saveSettings();
+      this.updatePrivacyControls();
     });
-    element(header, 'p', 'openrouter-privacy-hint', 'Messages go to OpenRouter and the selected model’s providers. Images and vault embeds are blocked in chat.');
+    element(options, 'p', 'openrouter-privacy-hint', 'Messages go to OpenRouter and the selected model’s providers. Images and vault embeds are blocked in chat.');
     this.messages = element(this.contentEl, 'div', 'openrouter-messages-container');
     this.messages.setAttribute('aria-label', 'Conversation');
+    this.showEmptyState();
     const input = element(this.contentEl, 'div', 'openrouter-input-container');
     this.selectionContainer = element(input, 'div', 'openrouter-attached-selection');
     this.selectionContainer.setAttribute('aria-label', 'Attached selection');
@@ -76,15 +94,17 @@ export class ChatView extends ItemView {
       }
     });
     const actions = element(input, 'div', 'openrouter-chat-actions');
+    button(actions, 'Clear chat', 'openrouter-clear-button', () => this.clear());
     this.sendButton = button(actions, 'Send', 'openrouter-send-button', () => { void this.send(); });
     this.stopButton = button(actions, 'Stop', 'openrouter-stop-button', () => this.stop());
-    button(actions, 'Clear chat', 'openrouter-clear-button', () => this.clear());
     this.setBusy(false);
   }
 
   private setBusy(busy: boolean): void {
     this.sendButton.disabled = busy;
+    this.sendButton.hidden = busy;
     this.stopButton.disabled = !busy;
+    this.stopButton.hidden = !busy;
     this.picker.setDisabled(busy);
     this.updatePrivacyControls(busy);
     this.messages.setAttribute('aria-busy', String(busy));
@@ -94,9 +114,18 @@ export class ChatView extends ItemView {
     this.sensitiveNotes.setState(busy, this.conversation.requiresSensitiveNotes);
     this.webSearch.disabled = busy || this.sensitiveNotes.enabled;
     this.webSearch.checked = this.host.settings.useWebSearch && !this.sensitiveNotes.enabled;
+    this.optionsButton.textContent = this.webSearch.checked ? 'Options · Web on' : 'Options';
+  }
+
+  private showEmptyState(): void {
+    const empty = element(this.messages, 'div', 'openrouter-empty-state');
+    element(empty, 'p', 'openrouter-empty-title', 'Start with a question');
+    element(empty, 'p', '', 'Or highlight a passage in a note and use “Add selection to chat” to explore it here.');
+    this.messages.scrollTop = 0;
   }
 
   private message(role: string): { message: HTMLElement; content: HTMLElement } {
+    this.messages.querySelector('.openrouter-empty-state')?.remove();
     const message = element(this.messages, 'div', `openrouter-message openrouter-message-${role.toLowerCase()}`);
     element(message, 'div', 'openrouter-message-role', role);
     const content = element(message, 'div', 'openrouter-message-content');
@@ -131,6 +160,8 @@ export class ChatView extends ItemView {
   private renderAttachedSelection(): void {
     this.selectionContainer.replaceChildren();
     this.selectionContainer.hidden = this.selection === null;
+    const empty = this.messages.querySelector<HTMLElement>('.openrouter-empty-state');
+    if (empty) empty.hidden = this.selection !== null;
     if (this.textarea) this.textarea.placeholder = this.selection === null ? 'Type your message…' : 'Ask about the selected text…';
     if (this.selection === null) return;
     this.selectionPreview(this.selectionContainer, this.selection);
@@ -155,6 +186,7 @@ export class ChatView extends ItemView {
     this.conversation.clear();
     this.activeResponse = null;
     this.messages.replaceChildren();
+    this.showEmptyState();
     this.selection = null;
     this.renderAttachedSelection();
     this.setBusy(false);
@@ -210,7 +242,9 @@ export class ChatView extends ItemView {
   }
 
   private addActions(parent: HTMLElement, result: Completion, model: string, sensitiveNotes: boolean): void {
-    const copy = button(parent, 'Copy', 'openrouter-copy-button', () => {
+    const footer = element(parent, 'div', 'openrouter-response-footer');
+    renderCost(footer, result.costUsd);
+    const copy = button(footer, 'Copy', 'openrouter-copy-button', () => {
       void (async () => {
         try {
           await parent.ownerDocument.defaultView!.navigator.clipboard.writeText(result.content);
@@ -220,7 +254,7 @@ export class ChatView extends ItemView {
     });
     const details = element(parent, 'details', 'openrouter-response-metrics');
     element(details, 'summary', '', 'Response metrics');
-    const text = [`Model: ${model}`, `Privacy: ${sensitiveNotes ? 'Sensitive notes — ZDR required' : 'Account defaults'}`, `Total time: ${result.totalMs} ms`,
+    const text = [`Model: ${model}`, costDescription(result.costUsd), `Privacy: ${sensitiveNotes ? 'Sensitive notes — ZDR required' : 'Account defaults'}`, `Total time: ${result.totalMs} ms`,
       result.firstTokenMs === null ? 'First token: unavailable for non-streaming responses' : `First token: ${result.firstTokenMs} ms`,
       result.completionTokens === null ? 'Token count: not reported' : `Output tokens: ${result.completionTokens}`];
     element(details, 'div', '', text.join('\n'));

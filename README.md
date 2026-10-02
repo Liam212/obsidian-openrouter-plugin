@@ -24,11 +24,14 @@ On upgrade, an existing plaintext `apiKey` is migrated to Obsidian's secret stor
 ## Chat and notes
 
 - Press **Enter** to send, or **Shift+Enter** for a new line. IME composition does not send prematurely.
+- New mobile chats open in a full tab; desktop chats open in the sidebar. Reopening chat reuses the existing conversation and draft.
+- The compact header keeps the model and **Sensitive notes** visible. Open **Options** for model search, free-only filtering, Refresh models, catalog pricing, web search, and privacy details. Options opens automatically if no available model is selected.
 - Search or filter models without silently changing the selected model. A selection hidden by a filter becomes unavailable until you change the filter or explicitly choose another model.
 - **Free inference only** uses advertised pricing, including additional listed charges. Unknown prices and dynamic routers are not labelled free; the explicit free router can qualify. Prices are a cached snapshot, not a billing guarantee.
 - **Web search** is an explicit opt-in and may incur additional charges. It is blocked while free-only mode is enabled. Web search uses the same setting for chat and selection prompts.
 - **Stop** cancels the pending request. **Clear chat** cancels it and discards the conversation history. Failed, cancelled, and partial exchanges are excluded from future request context. Cancellation cannot retract content already sent or guarantee that upstream billing stops immediately.
 - Streaming can be enabled on desktop. Mobile uses Obsidian's native HTTP API to avoid WebView networking restrictions; replies arrive when complete, and the desktop streaming preference is preserved. Metrics report elapsed time and API-reported output tokens. First-token timing is shown only for streaming; token counts are not fabricated when absent.
+- Each completed chat answer and selection-prompt response shows **Cost** in USD, taken directly from OpenRouter’s reported request charge. **Cost not reported** means the API did not supply a valid charge; it does not mean free. **Response metrics** (or **Cost details** in the prompt) shows the full reported amount.
 - Copy buttons copy the original Markdown. Basic Markdown formatting, code, tables, and ordinary HTTP(S) links are supported in chat. Raw HTML, remote images, vault embeds, and other plugins' Markdown processors are not executed.
 - To work with a note, select text and run **Generate from selection and insert response**. Inspect the plain-text response, then press **Insert** to replace the original selected range. If the note changed or its editor switched files, insertion is refused. You can select and copy the response manually.
 - Inserting or pasting the original Markdown into a note lets Obsidian render it normally, including any external images or embeds. Chat's restricted renderer does not change your notes' rendering behavior.
@@ -38,6 +41,14 @@ Settings include a system message, streaming, request timeout (default 120 secon
 On mobile, Stop and timeout stop waiting and discard late replies, but Obsidian's native HTTP API cannot cancel a request already sent. It may continue consuming network resources or incur provider charges. Failed mobile requests are not automatically retried.
 
 If model refresh fails, check that `https://openrouter.ai/api/v1/models` opens in Safari or your browser. This public endpoint does not need an API key. If it opens there but not in Obsidian, update this fork through BRAT, reload Obsidian, and refresh again. Versions before 1.2.1 used browser networking on mobile.
+
+## Response costs
+
+Cost comes from `usage.cost` in the completed API response, including the final usage event when streaming. OpenRouter supplies this [usage accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting) automatically; the plugin makes no extra lookup or model request. The displayed amount is the OpenRouter account charge in USD, not an estimate from the model’s advertised token rates. It covers that request, including any conversation history sent with it.
+
+Small costs display up to six decimal places. Positive amounts smaller than $0.000001 are labelled **< $0.000001 USD**, and the exact reported value is available in the response details. A reported zero displays **$0.00 USD**. Separate charges on your own provider account (BYOK) are not included.
+
+This is a per-response display, not an account spending ledger. Failed, interrupted or cancelled requests may still incur charges even though no completed-response cost is shown. Check OpenRouter’s Activity page for billing records. Costs and chats stay in memory and are discarded on Clear chat or close.
 
 ## Ask about highlighted text
 

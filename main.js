@@ -80,6 +80,20 @@ function modelLabel(model) {
   return `${model.name} \u2014 $${(prompt * 1e6).toLocaleString("en-US")}/$${(completion * 1e6).toLocaleString("en-US")} per 1M input/output tokens`;
 }
 
+// src/cost.ts
+function reportedCost(usage) {
+  if (!isRecord(usage)) return null;
+  return typeof usage.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null;
+}
+function formatCost(cost) {
+  if (cost === null) return "Cost not reported";
+  if (cost > 0 && cost < 1e-6) return "Cost: < $0.000001 USD";
+  return `Cost: $${cost.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 6 })} USD`;
+}
+function costDescription(cost) {
+  return cost === null ? "OpenRouter did not report a valid cost. This does not mean the request was free." : `Reported by OpenRouter: ${cost} USD. Separate charges from your own provider account are not included.`;
+}
+
 // src/api.ts
 var API = "https://openrouter.ai/api/v1/";
 var MAX_ANSWER = 1e6;
@@ -143,6 +157,7 @@ async function readCompletionStream(response, signal, onText) {
   let eventSize = 0;
   let content = "";
   let completionTokens = null;
+  let costUsd = null;
   let firstTokenMs = null;
   let finished = false;
   const cancel = () => {
@@ -167,6 +182,7 @@ async function readCompletionStream(response, signal, onText) {
     if (!isRecord(event)) throw new Error("OpenRouter returned an invalid streaming event.");
     if (event.error) throw new Error("OpenRouter reported a streaming error. Please retry.");
     completionTokens = usageTokens(event.usage) ?? completionTokens;
+    costUsd = reportedCost(event.usage) ?? costUsd;
     const choice = Array.isArray(event.choices) ? event.choices[0] : void 0;
     if (!isRecord(choice)) return;
     if (choice.finish_reason === "error") throw new Error("OpenRouter interrupted the response. Please retry.");
@@ -216,7 +232,7 @@ async function readCompletionStream(response, signal, onText) {
     }
     if (!finished) throw new Error("The response stream ended before completion. Please retry.");
     if (!content.trim()) throw new Error("OpenRouter returned no text. Try another model.");
-    return { content, completionTokens, firstTokenMs };
+    return { content, completionTokens, firstTokenMs, costUsd };
   } finally {
     signal.removeEventListener("abort", cancel);
     void reader.cancel().catch(() => void 0);
@@ -348,7 +364,7 @@ var OpenRouterClient = class {
         throw new Error("OpenRouter returned no text. Try another model.");
       }
       if (message.content.length > MAX_ANSWER) throw new Error("OpenRouter response exceeded the size limit.");
-      return { content: message.content, totalMs: Date.now() - started, firstTokenMs: null, completionTokens: usageTokens(data.usage) };
+      return { content: message.content, totalMs: Date.now() - started, firstTokenMs: null, completionTokens: usageTokens(data.usage), costUsd: reportedCost(data.usage) };
     });
   }
 };
@@ -5739,15 +5755,22 @@ function button(parent, text2, cls, callback) {
   node.addEventListener("click", callback);
   return node;
 }
+function renderCost(parent, cost) {
+  const label = element(parent, "span", "openrouter-response-cost", formatCost(cost));
+  label.title = costDescription(cost);
+  return label;
+}
 var ModelPicker = class {
-  constructor(parent, host, onChange) {
+  constructor(parent, host, onChange, options = {}) {
     this.host = host;
+    this.options = options;
     this.selection = host.settings.defaultModel;
     const wrapper = element(parent, "div", "openrouter-picker");
-    const label = element(wrapper, "label", "openrouter-model-label", "Model");
+    const label = element(wrapper, "label", "openrouter-model-label", options.compact ? "" : "Model");
     this.select = element(label, "select", "openrouter-model-select");
     this.select.setAttribute("aria-label", "Model");
-    const filters = element(wrapper, "div", "openrouter-model-filter");
+    const controls = options.controlsParent ?? wrapper;
+    const filters = element(controls, "div", "openrouter-model-filter");
     this.search = element(filters, "input", "openrouter-model-search");
     this.search.type = "search";
     this.search.placeholder = "Search models\u2026";
@@ -5760,8 +5783,10 @@ var ModelPicker = class {
     this.refreshButton = button(filters, "Refresh models", "openrouter-refresh-button", () => {
       void this.refresh();
     });
+    if (options.compact) this.priceHint = element(controls, "p", "openrouter-privacy-hint openrouter-model-pricing");
     this.select.addEventListener("change", () => {
       this.selection = this.select.value;
+      this.updatePrice();
       onChange?.(this.selection);
     });
     this.search.addEventListener("input", () => this.render());
@@ -5774,6 +5799,7 @@ var ModelPicker = class {
     this.render();
   }
   host;
+  options;
   select;
   search;
   freeOnly;
@@ -5783,6 +5809,7 @@ var ModelPicker = class {
   destroyed = false;
   disabled = false;
   refreshing = false;
+  priceHint;
   get value() {
     return this.select.value;
   }
@@ -5816,10 +5843,17 @@ var ModelPicker = class {
         group.label = model.provider;
         groups.set(model.provider, group);
       }
-      const option = element(group, "option", "", modelLabel(model));
+      const option = element(group, "option", "", this.options.compact ? model.name : modelLabel(model));
       option.value = model.id;
     }
     this.select.value = models.some((model) => model.id === this.selection) ? this.selection : "";
+    this.updatePrice();
+    if (!this.select.value) this.options.onUnavailable?.();
+  }
+  updatePrice() {
+    const model = this.host.settings.cachedModels.find((item) => item.id === this.select.value);
+    this.select.title = model ? modelLabel(model) : "Choose an available model";
+    if (this.priceHint) this.priceHint.textContent = model ? `Catalog pricing: ${modelLabel(model)}. Actual cost depends on usage and host; reported after the response.` : "Choose a model. Catalog rates are estimates; the response shows the reported request cost.";
   }
   setDisabled(disabled) {
     this.disabled = disabled;
@@ -5842,15 +5876,17 @@ var SensitiveNotesControl = class {
   active;
   busy = false;
   locked = false;
-  constructor(parent, enabled, onChange = () => void 0) {
+  status;
+  constructor(parent, enabled, onChange = () => void 0, descriptionParent) {
     this.active = enabled;
     const container = element(parent, "div", "openrouter-sensitive-notes");
     const label = element(container, "label", "openrouter-sensitive-label");
     this.checkbox = element(label, "input");
     this.checkbox.type = "checkbox";
     this.checkbox.checked = enabled;
-    label.append("Sensitive notes (require ZDR)");
-    this.description = element(container, "p", "openrouter-privacy-hint");
+    label.append(descriptionParent ? "Sensitive notes" : "Sensitive notes (require ZDR)");
+    if (descriptionParent) this.status = element(container, "span", "openrouter-sensitive-status");
+    this.description = element(descriptionParent ?? container, "p", "openrouter-privacy-hint");
     this.description.id = `openrouter-sensitive-description-${nextDescriptionId++}`;
     this.description.setAttribute("aria-live", "polite");
     this.checkbox.setAttribute("aria-describedby", this.description.id);
@@ -5875,6 +5911,10 @@ var SensitiveNotesControl = class {
   render() {
     this.checkbox.checked = this.active;
     this.checkbox.disabled = this.busy || this.locked;
+    if (this.status) {
+      this.status.textContent = this.locked ? "ZDR on \xB7 Clear chat to turn off" : this.active ? "ZDR required" : "";
+      this.status.hidden = !this.active;
+    }
     this.description.textContent = this.locked ? "Clear chat before turning this off: follow-ups include sensitive history. Requests require ZDR and disable web search and response caching." : this.active ? "Requires ZDR hosts and denies data collection. Requests disable web search and response caching. Cost and availability may change." : "Optional protection for this request. Requires ZDR hosts, which may change cost and availability.";
     if (this.active) this.description.append(" Account logging and enforced plugins still apply.");
   }
@@ -5882,6 +5922,7 @@ var SensitiveNotesControl = class {
 
 // src/chat-view.ts
 var VIEW_TYPE = "openrouter-chat-view";
+var nextOptionsId = 0;
 var ChatView = class extends import_obsidian.ItemView {
   constructor(leaf, host) {
     super(leaf);
@@ -5897,6 +5938,7 @@ var ChatView = class extends import_obsidian.ItemView {
   stopButton;
   sensitiveNotes;
   webSearch;
+  optionsButton;
   epoch = 0;
   closed = false;
   activeResponse = null;
@@ -5916,10 +5958,25 @@ var ChatView = class extends import_obsidian.ItemView {
     this.contentEl.replaceChildren();
     this.contentEl.classList.add("openrouter-chat-container");
     const header = element(this.contentEl, "div", "openrouter-chat-header");
-    element(header, "h3", "", "OpenRouter Chat");
-    this.picker = new ModelPicker(header, this.host);
-    this.sensitiveNotes = new SensitiveNotesControl(header, this.host.settings.sensitiveNotesByDefault, () => this.updatePrivacyControls());
-    const searchLabel = element(header, "label", "openrouter-websearch-label");
+    const modelRow = element(header, "div");
+    const toolbar = element(header, "div", "openrouter-chat-toolbar");
+    const privacyControl = element(toolbar, "div");
+    const options = element(header, "div", "openrouter-chat-options");
+    options.id = `openrouter-chat-options-${nextOptionsId++}`;
+    const setOptionsOpen = (open) => {
+      options.hidden = !open;
+      this.optionsButton.setAttribute("aria-expanded", String(open));
+    };
+    this.optionsButton = button(toolbar, "Options", "openrouter-options-button", () => setOptionsOpen(options.hidden));
+    this.optionsButton.setAttribute("aria-controls", options.id);
+    setOptionsOpen(false);
+    this.picker = new ModelPicker(modelRow, this.host, void 0, {
+      compact: true,
+      controlsParent: options,
+      onUnavailable: () => setOptionsOpen(true)
+    });
+    this.sensitiveNotes = new SensitiveNotesControl(privacyControl, this.host.settings.sensitiveNotesByDefault, () => this.updatePrivacyControls(), options);
+    const searchLabel = element(options, "label", "openrouter-websearch-label");
     const webSearch = element(searchLabel, "input");
     this.webSearch = webSearch;
     webSearch.type = "checkbox";
@@ -5937,10 +5994,12 @@ var ChatView = class extends import_obsidian.ItemView {
       }
       this.host.settings.useWebSearch = webSearch.checked;
       void this.host.saveSettings();
+      this.updatePrivacyControls();
     });
-    element(header, "p", "openrouter-privacy-hint", "Messages go to OpenRouter and the selected model\u2019s providers. Images and vault embeds are blocked in chat.");
+    element(options, "p", "openrouter-privacy-hint", "Messages go to OpenRouter and the selected model\u2019s providers. Images and vault embeds are blocked in chat.");
     this.messages = element(this.contentEl, "div", "openrouter-messages-container");
     this.messages.setAttribute("aria-label", "Conversation");
+    this.showEmptyState();
     const input = element(this.contentEl, "div", "openrouter-input-container");
     this.selectionContainer = element(input, "div", "openrouter-attached-selection");
     this.selectionContainer.setAttribute("aria-label", "Attached selection");
@@ -5955,16 +6014,18 @@ var ChatView = class extends import_obsidian.ItemView {
       }
     });
     const actions = element(input, "div", "openrouter-chat-actions");
+    button(actions, "Clear chat", "openrouter-clear-button", () => this.clear());
     this.sendButton = button(actions, "Send", "openrouter-send-button", () => {
       void this.send();
     });
     this.stopButton = button(actions, "Stop", "openrouter-stop-button", () => this.stop());
-    button(actions, "Clear chat", "openrouter-clear-button", () => this.clear());
     this.setBusy(false);
   }
   setBusy(busy) {
     this.sendButton.disabled = busy;
+    this.sendButton.hidden = busy;
     this.stopButton.disabled = !busy;
+    this.stopButton.hidden = !busy;
     this.picker.setDisabled(busy);
     this.updatePrivacyControls(busy);
     this.messages.setAttribute("aria-busy", String(busy));
@@ -5973,8 +6034,16 @@ var ChatView = class extends import_obsidian.ItemView {
     this.sensitiveNotes.setState(busy, this.conversation.requiresSensitiveNotes);
     this.webSearch.disabled = busy || this.sensitiveNotes.enabled;
     this.webSearch.checked = this.host.settings.useWebSearch && !this.sensitiveNotes.enabled;
+    this.optionsButton.textContent = this.webSearch.checked ? "Options \xB7 Web on" : "Options";
+  }
+  showEmptyState() {
+    const empty = element(this.messages, "div", "openrouter-empty-state");
+    element(empty, "p", "openrouter-empty-title", "Start with a question");
+    element(empty, "p", "", "Or highlight a passage in a note and use \u201CAdd selection to chat\u201D to explore it here.");
+    this.messages.scrollTop = 0;
   }
   message(role) {
+    this.messages.querySelector(".openrouter-empty-state")?.remove();
     const message = element(this.messages, "div", `openrouter-message openrouter-message-${role.toLowerCase()}`);
     element(message, "div", "openrouter-message-role", role);
     const content = element(message, "div", "openrouter-message-content");
@@ -6007,6 +6076,8 @@ var ChatView = class extends import_obsidian.ItemView {
   renderAttachedSelection() {
     this.selectionContainer.replaceChildren();
     this.selectionContainer.hidden = this.selection === null;
+    const empty = this.messages.querySelector(".openrouter-empty-state");
+    if (empty) empty.hidden = this.selection !== null;
     if (this.textarea) this.textarea.placeholder = this.selection === null ? "Type your message\u2026" : "Ask about the selected text\u2026";
     if (this.selection === null) return;
     this.selectionPreview(this.selectionContainer, this.selection);
@@ -6029,6 +6100,7 @@ var ChatView = class extends import_obsidian.ItemView {
     this.conversation.clear();
     this.activeResponse = null;
     this.messages.replaceChildren();
+    this.showEmptyState();
     this.selection = null;
     this.renderAttachedSelection();
     this.setBusy(false);
@@ -6089,7 +6161,9 @@ ${instruction}`;
     }
   }
   addActions(parent, result, model, sensitiveNotes) {
-    const copy = button(parent, "Copy", "openrouter-copy-button", () => {
+    const footer = element(parent, "div", "openrouter-response-footer");
+    renderCost(footer, result.costUsd);
+    const copy = button(footer, "Copy", "openrouter-copy-button", () => {
       void (async () => {
         try {
           await parent.ownerDocument.defaultView.navigator.clipboard.writeText(result.content);
@@ -6103,6 +6177,7 @@ ${instruction}`;
     element(details, "summary", "", "Response metrics");
     const text2 = [
       `Model: ${model}`,
+      costDescription(result.costUsd),
       `Privacy: ${sensitiveNotes ? "Sensitive notes \u2014 ZDR required" : "Account defaults"}`,
       `Total time: ${result.totalMs} ms`,
       result.firstTokenMs === null ? "First token: unavailable for non-streaming responses" : `First token: ${result.firstTokenMs} ms`,
@@ -6139,6 +6214,7 @@ var PromptModal = class extends import_obsidian2.Modal {
   result = null;
   request = null;
   response;
+  cost;
   insertButton;
   generateButton;
   sensitiveNotes;
@@ -6152,12 +6228,15 @@ var PromptModal = class extends import_obsidian2.Modal {
       this.result = null;
       this.insertButton.disabled = true;
       this.response.textContent = "Privacy mode changed. Generate a new response.";
+      this.cost.replaceChildren();
     });
     element(this.contentEl, "p", "openrouter-privacy-hint", "Generate sends the selected text to OpenRouter and the selected model\u2019s providers. Insert replaces the original selection with raw Markdown; Obsidian may render its embeds in the note.");
     element(this.contentEl, "h3", "", "Selected text");
     element(this.contentEl, "div", "openrouter-modal-prompt", this.prompt);
     element(this.contentEl, "h3", "", "Response");
     this.response = element(this.contentEl, "div", "openrouter-modal-response", "Response will appear here\u2026");
+    this.cost = element(this.contentEl, "div", "openrouter-modal-cost");
+    this.cost.setAttribute("aria-live", "polite");
     const actions = element(this.contentEl, "div", "openrouter-modal-buttons");
     this.generateButton = button(actions, "Generate", "openrouter-modal-generate", () => {
       void this.generate();
@@ -6178,6 +6257,7 @@ var PromptModal = class extends import_obsidian2.Modal {
     if (this.request || this.closed) return;
     this.result = null;
     this.insertButton.disabled = true;
+    this.cost.replaceChildren();
     const request = new AbortController();
     this.request = request;
     this.generateButton.disabled = true;
@@ -6199,6 +6279,10 @@ var PromptModal = class extends import_obsidian2.Modal {
       if (this.request !== request || request.signal.aborted || this.closed) return;
       this.result = result.content;
       this.response.textContent = result.content;
+      renderCost(this.cost, result.costUsd);
+      const details = element(this.cost, "details", "openrouter-response-metrics");
+      element(details, "summary", "", "Cost details");
+      element(details, "div", "", costDescription(result.costUsd));
       this.insertButton.disabled = false;
     } catch (error2) {
       if (this.request === request && !this.closed) this.response.textContent = isAbort(error2) ? "Cancelled." : errorMessage(error2);
@@ -6478,7 +6562,7 @@ var OpenRouterPlugin = class extends import_obsidian5.Plugin {
     try {
       const workspace = this.app.workspace;
       const existing = workspace.getLeavesOfType(VIEW_TYPE)[0];
-      const leaf = existing ?? workspace.getRightLeaf(false) ?? workspace.getLeaf("split");
+      const leaf = existing ?? (import_obsidian5.Platform.isMobileApp ? workspace.getLeaf("tab") : workspace.getRightLeaf(false) ?? workspace.getLeaf("split"));
       if (!existing) await leaf.setViewState({ type: VIEW_TYPE, active: true });
       await leaf.loadIfDeferred();
       if (this.stopped) return null;

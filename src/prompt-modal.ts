@@ -1,13 +1,15 @@
 import { Modal, type App } from 'obsidian';
 import { errorMessage, isAbort, abortError } from './api';
-import { button, element, ModelPicker, type PluginHost } from './ui';
+import { button, element, ModelPicker, renderCost, type PluginHost } from './ui';
 import { SensitiveNotesControl } from './sensitive-notes';
+import { costDescription } from './cost';
 
 export class PromptModal extends Modal {
   private picker!: ModelPicker;
   private result: string | null = null;
   private request: AbortController | null = null;
   private response!: HTMLElement;
+  private cost!: HTMLElement;
   private insertButton!: HTMLButtonElement;
   private generateButton!: HTMLButtonElement;
   private sensitiveNotes!: SensitiveNotesControl;
@@ -26,12 +28,15 @@ export class PromptModal extends Modal {
       this.result = null;
       this.insertButton.disabled = true;
       this.response.textContent = 'Privacy mode changed. Generate a new response.';
+      this.cost.replaceChildren();
     });
     element(this.contentEl, 'p', 'openrouter-privacy-hint', 'Generate sends the selected text to OpenRouter and the selected model’s providers. Insert replaces the original selection with raw Markdown; Obsidian may render its embeds in the note.');
     element(this.contentEl, 'h3', '', 'Selected text');
     element(this.contentEl, 'div', 'openrouter-modal-prompt', this.prompt);
     element(this.contentEl, 'h3', '', 'Response');
     this.response = element(this.contentEl, 'div', 'openrouter-modal-response', 'Response will appear here…');
+    this.cost = element(this.contentEl, 'div', 'openrouter-modal-cost');
+    this.cost.setAttribute('aria-live', 'polite');
     const actions = element(this.contentEl, 'div', 'openrouter-modal-buttons');
     this.generateButton = button(actions, 'Generate', 'openrouter-modal-generate', () => { void this.generate(); });
     this.insertButton = button(actions, 'Insert', 'openrouter-modal-insert', () => {
@@ -47,6 +52,7 @@ export class PromptModal extends Modal {
     if (this.request || this.closed) return;
     this.result = null;
     this.insertButton.disabled = true;
+    this.cost.replaceChildren();
     const request = new AbortController();
     this.request = request;
     this.generateButton.disabled = true;
@@ -64,6 +70,10 @@ export class PromptModal extends Modal {
       if (this.request !== request || request.signal.aborted || this.closed) return;
       this.result = result.content;
       this.response.textContent = result.content;
+      renderCost(this.cost, result.costUsd);
+      const details = element(this.cost, 'details', 'openrouter-response-metrics');
+      element(details, 'summary', '', 'Cost details');
+      element(details, 'div', '', costDescription(result.costUsd));
       this.insertButton.disabled = false;
     } catch (error) {
       if (this.request === request && !this.closed) this.response.textContent = isAbort(error) ? 'Cancelled.' : errorMessage(error);

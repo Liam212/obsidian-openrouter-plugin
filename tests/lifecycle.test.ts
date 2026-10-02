@@ -62,7 +62,8 @@ describe('conversation isolation', () => {
     expect(view.contentEl.querySelector('.openrouter-send-button')?.hasAttribute('disabled')).toBe(false);
     old.resolve(jsonResponse('late'));
     await request;
-    expect(view.contentEl.querySelector('.openrouter-messages-container')?.textContent).toBe('');
+    expect(view.contentEl.querySelector('.openrouter-message')).toBeNull();
+    expect(view.contentEl.querySelector('.openrouter-empty-state')).not.toBeNull();
     await view.onClose();
   });
 });

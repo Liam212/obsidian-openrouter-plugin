@@ -1,4 +1,5 @@
 import { parseModels } from './models';
+import { reportedCost } from './cost';
 import { isRecord, type Completion, type Message, type Model, type Settings } from './types';
 
 const API = 'https://openrouter.ai/api/v1/';
@@ -56,7 +57,7 @@ async function readJson(response: Response, limit: number, signal: AbortSignal):
 }
 
 /** Incremental SSE framing, including split UTF-8, CRLF, comments and multi-line data. */
-export async function readCompletionStream(response: Response, signal: AbortSignal, onText: (text: string) => void): Promise<Pick<Completion, 'content' | 'completionTokens' | 'firstTokenMs'>> {
+export async function readCompletionStream(response: Response, signal: AbortSignal, onText: (text: string) => void): Promise<Pick<Completion, 'content' | 'completionTokens' | 'firstTokenMs' | 'costUsd'>> {
   if (!response.body) throw new Error('OpenRouter returned an empty stream.');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -66,6 +67,7 @@ export async function readCompletionStream(response: Response, signal: AbortSign
   let eventSize = 0;
   let content = '';
   let completionTokens: number | null = null;
+  let costUsd: number | null = null;
   let firstTokenMs: number | null = null;
   let finished = false;
   const cancel = () => { void reader.cancel().catch(() => undefined); };
@@ -82,6 +84,8 @@ export async function readCompletionStream(response: Response, signal: AbortSign
     if (!isRecord(event)) throw new Error('OpenRouter returned an invalid streaming event.');
     if (event.error) throw new Error('OpenRouter reported a streaming error. Please retry.');
     completionTokens = usageTokens(event.usage) ?? completionTokens;
+    // Usage events contain cumulative totals, not increments. Zero is a valid charge.
+    costUsd = reportedCost(event.usage) ?? costUsd;
     const choice: unknown = Array.isArray(event.choices) ? event.choices[0] : undefined;
     if (!isRecord(choice)) return; // Usage-only events may have no choices.
     if (choice.finish_reason === 'error') throw new Error('OpenRouter interrupted the response. Please retry.');
@@ -128,7 +132,7 @@ export async function readCompletionStream(response: Response, signal: AbortSign
     }
     if (!finished) throw new Error('The response stream ended before completion. Please retry.');
     if (!content.trim()) throw new Error('OpenRouter returned no text. Try another model.');
-    return { content, completionTokens, firstTokenMs };
+    return { content, completionTokens, firstTokenMs, costUsd };
   } finally {
     signal.removeEventListener('abort', cancel);
     void reader.cancel().catch(() => undefined);
@@ -254,7 +258,7 @@ export class OpenRouterClient {
         throw new Error('OpenRouter returned no text. Try another model.');
       }
       if (message.content.length > MAX_ANSWER) throw new Error('OpenRouter response exceeded the size limit.');
-      return { content: message.content, totalMs: Date.now() - started, firstTokenMs: null, completionTokens: usageTokens(data.usage) };
+      return { content: message.content, totalMs: Date.now() - started, firstTokenMs: null, completionTokens: usageTokens(data.usage), costUsd: reportedCost(data.usage) };
     });
   }
 }

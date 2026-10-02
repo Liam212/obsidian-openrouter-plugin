@@ -9,7 +9,7 @@ import { deferred, settings } from './helpers';
 import { Platform, requestUrl, Setting } from './obsidian-mock';
 
 const catalog = { data: [{ id: 'vendor/paid', name: 'Example', pricing: { prompt: '0.001', completion: '0.002' } }] };
-const answer = { choices: [{ message: { content: 'Native reply' } }], usage: { completion_tokens: 5 } };
+const answer = { choices: [{ message: { content: 'Native reply' } }], usage: { completion_tokens: 5, cost: 0.000123 } };
 
 function nativeResponse(data: unknown, status = 200): RequestUrlResponse {
   const bytes = new TextEncoder().encode(JSON.stringify(data));
@@ -72,6 +72,7 @@ describe('native mobile transport', () => {
       settings: config, model: config.defaultModel, messages: [{ role: 'user', content: 'note' }], sensitiveNotes, onText
     });
     expect(result.content).toBe('Native reply');
+    expect(result.costUsd).toBe(0.000123);
     expect(result.firstTokenMs).toBeNull();
     expect(result.completionTokens).toBe(5);
     expect(config.useStreaming).toBe(true);

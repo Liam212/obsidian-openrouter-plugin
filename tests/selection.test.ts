@@ -3,9 +3,9 @@ import type { App, Editor, MarkdownFileInfo, Menu, MenuItem, PluginManifest, Wor
 import { ChatView, VIEW_TYPE } from '../src/chat-view';
 import OpenRouterPlugin from '../src/main';
 import { deferred, host, jsonResponse, settings } from './helpers';
-import { notices } from './obsidian-mock';
+import { notices, Platform } from './obsidian-mock';
 
-afterEach(() => { vi.unstubAllGlobals(); document.body.replaceChildren(); notices.length = 0; });
+afterEach(() => { Platform.isMobileApp = false; vi.unstubAllGlobals(); document.body.replaceChildren(); notices.length = 0; });
 
 async function chat(fetcher: typeof fetch = vi.fn(async () => jsonResponse())) {
   const plugin = host(fetcher);
@@ -210,7 +210,8 @@ describe('editor selection entry points', () => {
     await view.onClose(); plugin.onunload();
   });
 
-  it('reuses the existing chat from the editor menu and snapshots text when that menu opens', async () => {
+  it.each([false, true])('reuses existing chat and captures editor-menu text on mobile=%s', async mobile => {
+    Platform.isMobileApp = mobile;
     const { plugin, view, editor, context, getSelection, workspace, leaf, fetcher } = await setup(true);
     const callback = workspace.on.mock.calls.find(([event]) => event === 'editor-menu')![1];
     let action: (() => void) | undefined;
@@ -228,6 +229,16 @@ describe('editor selection entry points', () => {
     expect(workspace.getRightLeaf).not.toHaveBeenCalled();
     expect(plugin.registerEvent).toHaveBeenCalledOnce();
     expect(fetcher).not.toHaveBeenCalled();
+    await view.onClose(); plugin.onunload();
+  });
+
+  it('opens new mobile chat in a full tab without replacing the note or using the sidebar', async () => {
+    Platform.isMobileApp = true;
+    const { plugin, view, workspace, leaf } = await setup();
+    expect(await plugin.activateView()).toBe(view);
+    expect(workspace.getLeaf).toHaveBeenCalledWith('tab');
+    expect(workspace.getRightLeaf).not.toHaveBeenCalled();
+    expect(leaf.setViewState).toHaveBeenCalledWith({ type: VIEW_TYPE, active: true });
     await view.onClose(); plugin.onunload();
   });
 
