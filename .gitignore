@@ -1,0 +1,9 @@
+node_modules/
+coverage/
+*.tsbuildinfo
+.DS_Store
+data.json
+.obsidian/
+.env
+.env.*
+!.env.example

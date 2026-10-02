@@ -1,95 +1,65 @@
 # OpenRouter Chat for Obsidian
 
-An Obsidian plugin that allows you to chat with a wide variety of AI models using [OpenRouter](https://openrouter.ai).
+Chat with models available through [OpenRouter](https://openrouter.ai), or generate a response from selected note text. This fork's hardening work is based on AgileAndy's original plugin.
 
-## Features
-
-- Access to dozens of AI models including Claude, GPT, Gemini, Mistral, Llama, and more
-- Free model support with clearly marked free options
-- Model filtering and search by name or provider
-- Web search capability for real-time information (supported by some models)
-- Simple chat interface in the Obsidian sidebar
-- Insert AI responses directly at cursor position in your notes
-- Track response metrics for performance analysis
+**Requires Obsidian 1.11.4 or newer.** This is a locally built fork; the upstream community listing and upstream releases do not contain these changes.
 
 ## Installation
 
-### From Obsidian Community Plugins
+Build this repository using the development instructions below. Copy `main.js`, `manifest.json`, `styles.css`, `LICENSE`, and `THIRD_PARTY_NOTICES.txt` into `<vault>/.obsidian/plugins/openrouter/`, then enable OpenRouter Chat in Community plugins.
 
-1. Open Obsidian Settings
-2. Go to "Community plugins" and disable "Safe mode"
-3. Click "Browse" and search for "OpenRouter Chat"
-4. Install the plugin and enable it
+The plugin ID remains `openrouter` so existing settings can migrate. This replaces an existing installation of the original plugin; the two cannot run side by side with the same ID. Keep a backup before upgrading. Do not install this fork's files under a different folder name unless you also change the manifest ID.
 
-### Manual Installation
+## Setup
 
-1. Download the latest release from the [releases page](https://github.com/agileandy/obsidian-openrouter-plugin/releases)
-2. Extract the ZIP file into your Obsidian vault's `.obsidian/plugins/` directory
-3. Enable the plugin in Obsidian settings under "Community plugins"
+1. Create an API key at [OpenRouter](https://openrouter.ai/keys).
+2. In the plugin settings, use **API key** to create or select a named Obsidian secret. The settings file stores the secret's name, not its value.
+3. Refresh the model list and explicitly choose a default model. No model is selected automatically on a fresh installation. If a model disappears, choose a replacement; the plugin will not silently choose one for you.
+4. Open the chat using the ribbon icon or the **Open chat** command.
 
-## Configuration & Usage
+On upgrade, an existing plaintext `apiKey` is migrated to Obsidian's secret store and removed from plugin settings after the secret is verified. A conflicting existing secret is preserved. Startup stops on migration failure; the settings file is not rewritten until secret storage succeeds. Earlier backups or synced copies may still contain the old key; rotate it if those copies were exposed.
 
-### 1. Setup API Key
+## Chat and notes
 
-- Get an API key from [OpenRouter](https://openrouter.ai/keys)
-- Open plugin settings and enter your API key
-- Your API key stays on your device and is only used to authenticate with OpenRouter
+- Press **Enter** to send, or **Shift+Enter** for a new line. IME composition does not send prematurely.
+- Search or filter models without silently changing the selected model. A selection hidden by a filter becomes unavailable until you change the filter or explicitly choose another model.
+- **Free inference only** uses advertised pricing, including additional listed charges. Unknown prices and dynamic routers are not labelled free; the explicit free router can qualify. Prices are a cached snapshot, not a billing guarantee.
+- **Web search** is an explicit opt-in and may incur additional charges. It is blocked while free-only mode is enabled. Web search uses the same setting for chat and selection prompts.
+- **Stop** cancels the pending request. **Clear chat** cancels it and discards the conversation history. Failed, cancelled, and partial exchanges are excluded from future request context. Cancellation cannot retract content already sent or guarantee that upstream billing stops immediately.
+- Streaming can be enabled in settings. Metrics report elapsed time and API-reported output tokens. First-token timing is shown only for streaming; token counts are not fabricated when absent.
+- Copy buttons copy the original Markdown. Basic Markdown formatting, code, tables, and ordinary HTTP(S) links are supported in chat. Raw HTML, remote images, vault embeds, and other plugins' Markdown processors are not executed.
+- To work with a note, select text and run **Generate from selection and insert response**. Inspect the plain-text response, then press **Insert** to replace the original selected range. If the note changed or its editor switched files, insertion is refused. You can select and copy the response manually.
+- Inserting or pasting the original Markdown into a note lets Obsidian render it normally, including any external images or embeds. Chat's restricted renderer does not change your notes' rendering behavior.
 
-### 2. Select Models
+Settings include a system message, streaming, request timeout (default 120 seconds), and maximum output tokens (default 4096). Model-list requests have a 30-second timeout. API/provider limits may be lower.
 
-- Choose your default model in the settings (Gemini 2.0 Flash is set as the default free option)
-- Use the dropdown in the chat interface to switch between models for each conversation
-- Navigate the models grouped by provider (OpenAI, Anthropic, Google, etc.)
+## Privacy and security
 
-### 3. Filter & Search Models
+Typed messages, successful conversation history, the system message, and explicitly submitted selected text are sent to OpenRouter and routed to model providers. There is no automatic note indexing, full-vault upload, analytics, chat persistence, or background model-generated action execution. The public model catalog is refreshed on startup when the cache is empty or older than one day; this request does not include an API key. Ordinary links connect externally only when clicked.
 
-- Use the search box to find models by name or provider
-- Toggle "Free models only" to see only free options
-- Click the refresh button to update the model list from OpenRouter
+The Obsidian secret store keeps keys out of the plugin's `data.json`, but is not a security boundary against other installed plugins or software with access to the device. This plugin does not promise encrypted-at-rest or OS-keychain-backed storage. Provider data retention and billing remain subject to your OpenRouter/provider configuration.
 
-### 4. Chat Interface
+See [SECURITY.md](SECURITY.md) for boundaries and [CONTRIBUTING.md](CONTRIBUTING.md) for validation and the manual Obsidian smoke checklist.
 
-- Click the chat icon in the ribbon or use the command "Open OpenRouter Chat"
-- Type your message in the input box
-- Press Enter to send (or Shift+Enter for a new line)
-- View the AI's response in the chat window
-- Clear the chat with the "Clear Chat" button to start fresh
+## Development
 
-### 5. Copy Output to Clipboard
+Use Node.js 24.15 or newer (Node 24 LTS is used by CI):
 
-- Each assistant message includes a copy button (📋)
-- Click the button to copy the entire message to your clipboard
-- A checkmark (✓) will briefly appear to confirm the copy
+```sh
+npm ci --include=dev --ignore-scripts
+npm run check
+npm run check:bundle
+npm audit --include=dev
+```
 
-### 6. Web Search
+- `npm run dev`: rebuild the bundle when source changes.
+- `npm run typecheck`: strict TypeScript checks for source and tests.
+- `npm test`: regression tests, including DOM tests with a mocked Obsidian host and mocked network.
+- `npm run build`: typecheck and regenerate the committed `main.js`.
+- `npm run check:bundle`: verify that committed `main.js` exactly matches a fresh build.
 
-- Toggle the web search button (🌐) to enable real-time information lookup
-- Note: This feature is only supported by some models and may incur additional costs
-- When enabled, the AI can search the web to provide up-to-date information
-
-### 7. Response Metrics
-
-- Each response includes performance metrics
-- View time to first token, total time, and token count
-- Click the metrics button (📊) to see detailed information
-- Use these metrics to compare performance between different models
-
-## Default Model
-
-The default model is set to **Google Gemini 2.0 Flash** (free), which offers a good balance of performance and accessibility for all users.
-
-## Keyboard Shortcuts
-
-- **Enter**: Send message
-- **Shift+Enter**: Add new line in the input
-- **Up Arrow**: View response metrics (when available)
-
-## Support
-
-- Visit [OpenRouter](https://openrouter.ai) for more information about available models
-- For plugin issues, please file a GitHub issue on this repository
-- For API-related questions, please refer to the [OpenRouter documentation](https://openrouter.ai/docs)
+Edit `src/`, not the generated bundle. The runtime bundle includes the Markdown parser; Obsidian itself remains external. Dependency versions are pinned in `package-lock.json`. The Obsidian API types are pinned to the minimum supported host version. The `moment` override patches a transitive development-only dependency of those types; it does not replace Obsidian's own runtime libraries.
 
 ## License
 
-This project is licensed under the GPL-3.0 License.
+GPL-3.0; see [LICENSE](LICENSE). Original plugin by [AgileAndy](https://github.com/agileandy/obsidian-openrouter-plugin). Bundled third-party license notices are in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
