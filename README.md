@@ -2,18 +2,20 @@
 
 Chat with models available through [OpenRouter](https://openrouter.ai), or generate a response from selected note text. This fork's hardening work is based on AgileAndy's original plugin.
 
-**Requires Obsidian 1.11.4 or newer.** This is a locally built fork; the upstream community listing and upstream releases do not contain these changes.
+**Requires Obsidian 1.11.4 or newer.** Install this fork using its GitHub releases or BRAT; the upstream community listing and upstream releases do not contain these changes.
 
 ## Installation
 
-Build this repository using the development instructions below. Copy `main.js`, `manifest.json`, `styles.css`, `LICENSE`, and `THIRD_PARTY_NOTICES.txt` into `<vault>/.obsidian/plugins/openrouter/`, then enable OpenRouter Chat in Community plugins.
+On iPhone/iPad, install and enable **BRAT** from Obsidian's Community plugins. In BRAT settings, choose **Add beta plugin**, enter `Liam212/obsidian-openrouter-plugin`, and install the latest release. Then enable **OpenRouter Chat**. If your BRAT installation is pinned to an older version, edit its entry and select the new release or Latest version before updating.
+
+For manual installation, download `openrouter-<version>.zip` from this fork's [releases](https://github.com/Liam212/obsidian-openrouter-plugin/releases) and extract the `openrouter` folder into `<vault>/.obsidian/plugins/`. Alternatively, build using the development instructions below and copy `main.js`, `manifest.json`, `styles.css`, `LICENSE`, and `THIRD_PARTY_NOTICES.txt` into `<vault>/.obsidian/plugins/openrouter/`. Enable OpenRouter Chat in Community plugins.
 
 The plugin ID remains `openrouter` so existing settings can migrate. This replaces an existing installation of the original plugin; the two cannot run side by side with the same ID. Keep a backup before upgrading. Do not install this fork's files under a different folder name unless you also change the manifest ID.
 
 ## Setup
 
 1. Create an API key at [OpenRouter](https://openrouter.ai/keys).
-2. In the plugin settings, use **API key** to create or select a named Obsidian secret. The settings file stores the secret's name, not its value.
+2. In the plugin settings, use **API key** to create or select a named Obsidian secret. For example, use `openrouter-api-key` as the secret's **name** and paste your actual OpenRouter API key as its **value**, then select that secret. The name is a label you choose; the settings file stores that label, not the key itself.
 3. Refresh the model list and explicitly choose a default model. No model is selected automatically on a fresh installation. If a model disappears, choose a replacement; the plugin will not silently choose one for you.
 4. Open the chat using the ribbon icon or the **Open chat** command.
 
@@ -26,12 +28,16 @@ On upgrade, an existing plaintext `apiKey` is migrated to Obsidian's secret stor
 - **Free inference only** uses advertised pricing, including additional listed charges. Unknown prices and dynamic routers are not labelled free; the explicit free router can qualify. Prices are a cached snapshot, not a billing guarantee.
 - **Web search** is an explicit opt-in and may incur additional charges. It is blocked while free-only mode is enabled. Web search uses the same setting for chat and selection prompts.
 - **Stop** cancels the pending request. **Clear chat** cancels it and discards the conversation history. Failed, cancelled, and partial exchanges are excluded from future request context. Cancellation cannot retract content already sent or guarantee that upstream billing stops immediately.
-- Streaming can be enabled in settings. Metrics report elapsed time and API-reported output tokens. First-token timing is shown only for streaming; token counts are not fabricated when absent.
+- Streaming can be enabled on desktop. Mobile uses Obsidian's native HTTP API to avoid WebView networking restrictions; replies arrive when complete, and the desktop streaming preference is preserved. Metrics report elapsed time and API-reported output tokens. First-token timing is shown only for streaming; token counts are not fabricated when absent.
 - Copy buttons copy the original Markdown. Basic Markdown formatting, code, tables, and ordinary HTTP(S) links are supported in chat. Raw HTML, remote images, vault embeds, and other plugins' Markdown processors are not executed.
 - To work with a note, select text and run **Generate from selection and insert response**. Inspect the plain-text response, then press **Insert** to replace the original selected range. If the note changed or its editor switched files, insertion is refused. You can select and copy the response manually.
 - Inserting or pasting the original Markdown into a note lets Obsidian render it normally, including any external images or embeds. Chat's restricted renderer does not change your notes' rendering behavior.
 
 Settings include a system message, streaming, request timeout (default 120 seconds), and maximum output tokens (default 4096). Model-list requests have a 30-second timeout. API/provider limits may be lower.
+
+On mobile, Stop and timeout stop waiting and discard late replies, but Obsidian's native HTTP API cannot cancel a request already sent. It may continue consuming network resources or incur provider charges. Failed mobile requests are not automatically retried.
+
+If model refresh fails, check that `https://openrouter.ai/api/v1/models` opens in Safari or your browser. This public endpoint does not need an API key. If it opens there but not in Obsidian, update this fork through BRAT, reload Obsidian, and refresh again. Versions before 1.2.1 used browser networking on mobile.
 
 ## Sensitive notes
 

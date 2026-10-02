@@ -4,8 +4,8 @@ This document describes intended protections, not a guarantee that this plugin o
 
 ## Data and credentials
 
-- Requests are limited in code to HTTPS endpoints under `https://openrouter.ai/api/v1/`. Redirects are rejected and browser credentials are omitted.
-- Chat requests use the named Obsidian secret as the bearer credential. Public catalog requests do not send credentials.
+- Requests start only at the fixed HTTPS model-catalog and chat-completion endpoints under `https://openrouter.ai/api/v1/`. Desktop fetch rejects redirects and omits browser credentials. Mobile uses Obsidian's native `requestUrl`; its public API does not expose redirect or cookie controls, so those behaviors are delegated to the host and are not enforced by this plugin.
+- Chat requests use the named Obsidian secret as the bearer credential. Public catalog requests never include a plugin-supplied API key, body, or authorization header.
 - Only explicitly submitted chat/selected text and the current conversation context are sent. Successful exchanges are retained in memory until the view closes or chat is cleared.
 - No provider error bodies, keys, prompts, or generated answers are written to logs. Error notices use local messages and HTTP status codes.
 - Secrets migrate out of legacy settings only after storage succeeds and the secret can be read back. Settings writes use a whitelist and an ordered queue.
@@ -40,11 +40,13 @@ Model output never invokes tools, reads other notes, executes commands, or write
 
 ## Requests and cost
 
-Every request has an AbortController and an overall deadline covering headers and body consumption. Clear, Stop, modal close, view close, and plugin unload cancel applicable work. Generation identity checks reject stale completions even if cancellation is ignored by a transport.
+Every request has an AbortController and an overall deadline. Clear, Stop, modal close, view close, and plugin unload cancel applicable plugin work. Desktop fetch receives the abort signal. Mobile native requests cannot be aborted at the transport level: the plugin stops waiting immediately and rejects late results, while the host request may continue transferring data and incurring charges. Generation identity checks prevent discarded output from appearing or becoming conversation history.
+
+Mobile selects the native transport before sending, requests non-streaming responses, and retains the same model, message, output-limit, and Sensitive notes policy. There is no automatic retry through a second transport after a failure, avoiding duplicate submissions. Desktop streaming remains supported.
 
 Model selection is explicit; missing/filtered models cannot fall through to the first option. Free inference labels require known zero pricing, excluding dynamic routers except the explicit free router. Web search is blocked in free-only mode. Advertised pricing can change, and cancellation does not guarantee upstream work or charges stop immediately. Configure an appropriate key credit limit with your provider.
 
-Responses and SSE events are size-limited, malformed/truncated streams are rejected, and failed or partial exchanges are not retained as conversation context. Output token limits bound requested response length; provider context/rate limits still apply.
+Responses and SSE events are size-limited before parsing, malformed/truncated streams are rejected, and failed or partial exchanges are not retained as conversation context. On mobile, the host buffers the full HTTP response before returning it, so the plugin's size check cannot bound the native download or its buffering allocation. Output token limits bound requested response length; provider context/rate limits still apply.
 
 ## Dependency controls
 

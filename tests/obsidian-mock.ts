@@ -1,5 +1,8 @@
 import { vi } from 'vitest';
-import type { App, Command, PluginManifest, WorkspaceLeaf } from 'obsidian';
+import type { App, Command, PluginManifest, RequestUrlParam, RequestUrlResponse, WorkspaceLeaf } from 'obsidian';
+
+export const Platform = { isMobileApp: false };
+export const requestUrl = vi.fn<(request: RequestUrlParam) => Promise<RequestUrlResponse>>();
 
 export const notices: string[] = [];
 export class Notice { constructor(message: string) { notices.push(message); } }

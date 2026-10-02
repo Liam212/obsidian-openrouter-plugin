@@ -149,7 +149,7 @@ export class OpenRouterClient {
   private requests = new Set<AbortController>();
   private disposed = false;
 
-  constructor(private getKey: () => string | null, private fetcher: typeof fetch = fetch) {}
+  constructor(private getKey: () => string | null, private fetcher: typeof fetch = fetch, readonly supportsStreaming = true) {}
 
   dispose(): void {
     this.disposed = true;
@@ -213,6 +213,7 @@ export class OpenRouterClient {
     const { model, settings, messages, signal, onText } = options;
     const sensitiveNotes = options.sensitiveNotes === true;
     const useWebSearch = settings.useWebSearch && !sensitiveNotes;
+    const useStreaming = settings.useStreaming && this.supportsStreaming;
     const selected = settings.cachedModels.find(candidate => candidate.id === model);
     if (!model || !selected) throw new Error('Choose an available model before sending. Refresh the model list if needed.');
     if (sensitiveNotes && model.split(':').includes('online')) throw new Error('Choose a model without the :online web-search variant for Sensitive notes.');
@@ -228,7 +229,7 @@ export class OpenRouterClient {
         ...(sensitiveNotes ? { 'X-OpenRouter-Cache': 'false' } : {})
       },
       body: JSON.stringify({
-        model, messages, stream: settings.useStreaming, max_tokens: settings.maxOutputTokens,
+        model, messages, stream: useStreaming, max_tokens: settings.maxOutputTokens,
         ...(sensitiveNotes ? {
           provider: { zdr: true, data_collection: 'deny' },
           // Explicitly override an account's web-search default, not just the local toggle.
@@ -236,7 +237,7 @@ export class OpenRouterClient {
         } : useWebSearch ? { plugins: [{ id: 'web' }] } : {})
       })
     }, settings.requestTimeoutSeconds * 1000, signal, async (response, requestSignal) => {
-      if (settings.useStreaming) {
+      if (useStreaming) {
         const headersMs = Date.now() - started;
         const result = await readCompletionStream(response, requestSignal, text => {
           requestSignal.throwIfAborted();

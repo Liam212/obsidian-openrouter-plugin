@@ -1,10 +1,11 @@
-import { Notice, Plugin, type Editor, type MarkdownFileInfo } from 'obsidian';
+import { Notice, Platform, Plugin, type Editor, type MarkdownFileInfo } from 'obsidian';
 import { OpenRouterClient, errorMessage, isAbort } from './api';
 import { ChatView, VIEW_TYPE } from './chat-view';
 import { PromptModal } from './prompt-modal';
 import { migrateSettings, readSettings } from './settings';
 import { OpenRouterSettingTab } from './settings-tab';
 import type { Settings } from './types';
+import { createMobileFetch } from './mobile-transport';
 
 export default class OpenRouterPlugin extends Plugin {
   settings: Settings = readSettings(null);
@@ -24,7 +25,11 @@ export default class OpenRouterPlugin extends Plugin {
       new Notice('OpenRouter could not load or migrate its settings. Check vault storage access and use Obsidian 1.11.4 or newer.');
       throw new Error('OpenRouter settings migration failed.');
     }
-    this.client = new OpenRouterClient(() => this.settings.secretName ? this.app.secretStorage.getSecret(this.settings.secretName) : null);
+    this.client = new OpenRouterClient(
+      () => this.settings.secretName ? this.app.secretStorage.getSecret(this.settings.secretName) : null,
+      Platform.isMobileApp ? createMobileFetch() : fetch,
+      !Platform.isMobileApp
+    );
     this.registerView(VIEW_TYPE, leaf => new ChatView(leaf, this));
     this.addRibbonIcon('message-square', 'OpenRouter Chat', () => { void this.activateView(); });
     this.addCommand({ id: 'open-openrouter-chat', name: 'Open chat', callback: () => { void this.activateView(); } });

@@ -24,7 +24,7 @@ __export(main_exports, {
   default: () => OpenRouterPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/types.ts
 function isRecord(value) {
@@ -224,12 +224,14 @@ async function readCompletionStream(response, signal, onText) {
   }
 }
 var OpenRouterClient = class {
-  constructor(getKey, fetcher = fetch) {
+  constructor(getKey, fetcher = fetch, supportsStreaming = true) {
     this.getKey = getKey;
     this.fetcher = fetcher;
+    this.supportsStreaming = supportsStreaming;
   }
   getKey;
   fetcher;
+  supportsStreaming;
   requests = /* @__PURE__ */ new Set();
   disposed = false;
   dispose() {
@@ -299,6 +301,7 @@ var OpenRouterClient = class {
     const { model, settings, messages, signal, onText } = options;
     const sensitiveNotes = options.sensitiveNotes === true;
     const useWebSearch = settings.useWebSearch && !sensitiveNotes;
+    const useStreaming = settings.useStreaming && this.supportsStreaming;
     const selected = settings.cachedModels.find((candidate) => candidate.id === model);
     if (!model || !selected) throw new Error("Choose an available model before sending. Refresh the model list if needed.");
     if (sensitiveNotes && model.split(":").includes("online")) throw new Error("Choose a model without the :online web-search variant for Sensitive notes.");
@@ -319,7 +322,7 @@ var OpenRouterClient = class {
       body: JSON.stringify({
         model,
         messages,
-        stream: settings.useStreaming,
+        stream: useStreaming,
         max_tokens: settings.maxOutputTokens,
         ...sensitiveNotes ? {
           provider: { zdr: true, data_collection: "deny" },
@@ -328,7 +331,7 @@ var OpenRouterClient = class {
         } : useWebSearch ? { plugins: [{ id: "web" }] } : {}
       })
     }, settings.requestTimeoutSeconds * 1e3, signal, async (response, requestSignal) => {
-      if (settings.useStreaming) {
+      if (useStreaming) {
         const headersMs = Date.now() - started;
         const result = await readCompletionStream(response, requestSignal, (text2) => {
           requestSignal.throwIfAborted();
@@ -6215,7 +6218,7 @@ var OpenRouterSettingTab = class extends import_obsidian3.PluginSettingTab {
     this.picker?.destroy();
     this.containerEl.replaceChildren();
     element(this.containerEl, "h2", "", "OpenRouter Chat");
-    const credential = new import_obsidian3.Setting(this.containerEl).setName("API key").setDesc("Select or create an OpenRouter secret. Plugin settings store only its name.");
+    const credential = new import_obsidian3.Setting(this.containerEl).setName("API key").setDesc("Create a secret named openrouter-api-key (or another label), paste your OpenRouter API key as its value, then select it here. The name is a label you choose.");
     new import_obsidian3.SecretComponent(this.app, credential.controlEl).setValue(this.host.settings.secretName).onChange((value) => {
       this.host.settings.secretName = value ?? "";
       void this.host.saveSettings();
@@ -6231,12 +6234,16 @@ var OpenRouterSettingTab = class extends import_obsidian3.PluginSettingTab {
       this.host.settings.defaultModel = model;
       void this.host.saveSettings();
     });
-    new import_obsidian3.Setting(this.containerEl).setName("Stream responses").setDesc("Display text as it arrives.").addToggle((toggle) => {
-      toggle.setValue(this.host.settings.useStreaming).onChange((value) => {
-        this.host.settings.useStreaming = value;
-        void this.host.saveSettings();
+    if (this.host.client.supportsStreaming) {
+      new import_obsidian3.Setting(this.containerEl).setName("Stream responses").setDesc("Display text as it arrives.").addToggle((toggle) => {
+        toggle.setValue(this.host.settings.useStreaming).onChange((value) => {
+          this.host.settings.useStreaming = value;
+          void this.host.saveSettings();
+        });
       });
-    });
+    } else {
+      new import_obsidian3.Setting(this.containerEl).setName("Responses on mobile").setDesc("Replies appear when complete. Streaming is unavailable on mobile; your desktop streaming preference is preserved. Stop and timeout discard the reply, but cannot stop an already-sent mobile request.");
+    }
     new import_obsidian3.Setting(this.containerEl).setName("Sensitive notes by default").setDesc("Start new chats and note prompts with Sensitive notes enabled. Requires Zero Data Retention hosts and denies data collection; disables web search and response caching. Availability and cost may change. You can switch it per chat or prompt.").addToggle((toggle) => {
       toggle.setValue(this.host.settings.sensitiveNotesByDefault).onChange((value) => {
         this.host.settings.sensitiveNotesByDefault = value;
@@ -6271,8 +6278,34 @@ var OpenRouterSettingTab = class extends import_obsidian3.PluginSettingTab {
   }
 };
 
+// src/mobile-transport.ts
+var import_obsidian4 = require("obsidian");
+function createMobileFetch(request = import_obsidian4.requestUrl) {
+  return async (input, init) => {
+    const catalog = input === "https://openrouter.ai/api/v1/models" && init?.method === "GET";
+    const completion = input === "https://openrouter.ai/api/v1/chat/completions" && init?.method === "POST";
+    if (!catalog && !completion) throw new Error("Unsupported OpenRouter request.");
+    if (init?.body != null && typeof init.body !== "string") throw new Error("Unsupported request body.");
+    init?.signal?.throwIfAborted();
+    const response = await request({
+      url: input,
+      method: init?.method,
+      // Catalog requests never need credentials, even if passed by mistake.
+      ...completion ? {
+        headers: Object.fromEntries(new Headers(init?.headers)),
+        body: init?.body
+      } : {},
+      throw: false
+    });
+    init?.signal?.throwIfAborted();
+    const successful = response.status >= 200 && response.status < 300;
+    const empty = response.status === 204 || response.status === 205;
+    return new Response(successful && !empty ? response.arrayBuffer : null, { status: response.status });
+  };
+}
+
 // src/main.ts
-var OpenRouterPlugin = class extends import_obsidian4.Plugin {
+var OpenRouterPlugin = class extends import_obsidian5.Plugin {
   settings = readSettings(null);
   client;
   observers = /* @__PURE__ */ new Set();
@@ -6286,10 +6319,14 @@ var OpenRouterPlugin = class extends import_obsidian4.Plugin {
       if (!this.app.secretStorage) throw new Error("Secret storage unavailable.");
       this.settings = await migrateSettings(await this.loadData(), this.app.secretStorage, (data) => this.saveData(data));
     } catch {
-      new import_obsidian4.Notice("OpenRouter could not load or migrate its settings. Check vault storage access and use Obsidian 1.11.4 or newer.");
+      new import_obsidian5.Notice("OpenRouter could not load or migrate its settings. Check vault storage access and use Obsidian 1.11.4 or newer.");
       throw new Error("OpenRouter settings migration failed.");
     }
-    this.client = new OpenRouterClient(() => this.settings.secretName ? this.app.secretStorage.getSecret(this.settings.secretName) : null);
+    this.client = new OpenRouterClient(
+      () => this.settings.secretName ? this.app.secretStorage.getSecret(this.settings.secretName) : null,
+      import_obsidian5.Platform.isMobileApp ? createMobileFetch() : fetch,
+      !import_obsidian5.Platform.isMobileApp
+    );
     this.registerView(VIEW_TYPE, (leaf) => new ChatView(leaf, this));
     this.addRibbonIcon("message-square", "OpenRouter Chat", () => {
       void this.activateView();
@@ -6307,7 +6344,7 @@ var OpenRouterPlugin = class extends import_obsidian4.Plugin {
   openPrompt(editor, context) {
     const prompt = editor.getSelection();
     if (!prompt) {
-      new import_obsidian4.Notice("Select text to use as the prompt.");
+      new import_obsidian5.Notice("Select text to use as the prompt.");
       return;
     }
     const originalDocument = editor.getValue();
@@ -6325,7 +6362,7 @@ var OpenRouterPlugin = class extends import_obsidian4.Plugin {
     const snapshot = readSettings(this.settings);
     const save = this.saves.then(() => this.saveData(snapshot));
     this.saves = save.catch(() => {
-      new import_obsidian4.Notice("OpenRouter settings could not be saved. Check vault storage access.");
+      new import_obsidian5.Notice("OpenRouter settings could not be saved. Check vault storage access.");
     });
     await this.saves;
   }
@@ -6347,7 +6384,7 @@ var OpenRouterPlugin = class extends import_obsidian4.Plugin {
         for (const observer of this.observers) observer();
         return true;
       } catch (error2) {
-        if (!this.stopped && !isAbort(error2)) new import_obsidian4.Notice(errorMessage(error2));
+        if (!this.stopped && !isAbort(error2)) new import_obsidian5.Notice(errorMessage(error2));
         return false;
       }
     })();

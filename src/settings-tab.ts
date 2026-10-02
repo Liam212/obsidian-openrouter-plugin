@@ -11,7 +11,7 @@ export class OpenRouterSettingTab extends PluginSettingTab {
     this.picker?.destroy();
     this.containerEl.replaceChildren();
     element(this.containerEl, 'h2', '', 'OpenRouter Chat');
-    const credential = new Setting(this.containerEl).setName('API key').setDesc('Select or create an OpenRouter secret. Plugin settings store only its name.');
+    const credential = new Setting(this.containerEl).setName('API key').setDesc('Create a secret named openrouter-api-key (or another label), paste your OpenRouter API key as its value, then select it here. The name is a label you choose.');
     new SecretComponent(this.app, credential.controlEl).setValue(this.host.settings.secretName).onChange(value => {
       this.host.settings.secretName = value ?? '';
       void this.host.saveSettings();
@@ -27,12 +27,16 @@ export class OpenRouterSettingTab extends PluginSettingTab {
       this.host.settings.defaultModel = model;
       void this.host.saveSettings();
     });
-    new Setting(this.containerEl).setName('Stream responses').setDesc('Display text as it arrives.').addToggle(toggle => {
-      toggle.setValue(this.host.settings.useStreaming).onChange(value => {
-        this.host.settings.useStreaming = value;
-        void this.host.saveSettings();
+    if (this.host.client.supportsStreaming) {
+      new Setting(this.containerEl).setName('Stream responses').setDesc('Display text as it arrives.').addToggle(toggle => {
+        toggle.setValue(this.host.settings.useStreaming).onChange(value => {
+          this.host.settings.useStreaming = value;
+          void this.host.saveSettings();
+        });
       });
-    });
+    } else {
+      new Setting(this.containerEl).setName('Responses on mobile').setDesc('Replies appear when complete. Streaming is unavailable on mobile; your desktop streaming preference is preserved. Stop and timeout discard the reply, but cannot stop an already-sent mobile request.');
+    }
     new Setting(this.containerEl).setName('Sensitive notes by default').setDesc('Start new chats and note prompts with Sensitive notes enabled. Requires Zero Data Retention hosts and denies data collection; disables web search and response caching. Availability and cost may change. You can switch it per chat or prompt.').addToggle(toggle => {
       toggle.setValue(this.host.settings.sensitiveNotesByDefault).onChange(value => {
         this.host.settings.sensitiveNotesByDefault = value;

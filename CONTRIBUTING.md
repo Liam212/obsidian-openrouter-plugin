@@ -5,6 +5,7 @@
 - `src/main.ts`: plugin lifecycle, serialized settings writes, model refresh, and guarded note insertion.
 - `src/settings.ts`: validated settings and credential migration.
 - `src/api.ts`: fixed-origin requests, deadlines, cancellation, response validation, and incremental SSE parsing.
+- `src/mobile-transport.ts`: allowlisted native mobile HTTP adapter; buffered replies, with cancellation/deadlines enforced by the caller rather than the host transport.
 - `src/conversation.ts`: committed chat history and cancellation identities.
 - `src/sensitive-notes.ts`: local privacy controls and protected-history state.
 - `src/models.ts` / `src/ui.ts`: pricing validation and explicit model selection.
@@ -23,7 +24,7 @@ Automated host mocks and ordinary-browser checks do not establish compatibility 
 1. Install the five documented distribution files. Enable, disable, and reload the plugin. Confirm chat opens even while offline and a failed catalog refresh preserves the last successful cache.
 2. Upgrade a disposable legacy settings file with a test credential. Verify it migrates to a named secret and `data.json` no longer contains the literal key. Verify another existing secret is not overwritten. Verify storage failures are actionable and do not delete the original configuration.
 3. Select a valid model; refresh and search the list. Confirm the choice is preserved when available and no paid replacement is chosen when it disappears. Verify a new installation requires an explicit selection.
-4. With a limited-credit test key, send a streaming and non-streaming message. Exercise invalid key, exhausted credits, and rate limit responses. Check settings for timeout and maximum output tokens.
+4. With a limited-credit test key, send streaming and non-streaming messages on desktop. On mobile, confirm the native request path loads the public catalog and completes chat and selection prompts without browser fetch, sends `stream: false` even when the saved desktop preference is on, and shows the Responses on mobile explanation. Exercise invalid key, exhausted credits, and rate limit responses. Check timeout and maximum output tokens. Native mobile cancellation must immediately discard output; the underlying host request may continue.
 5. Clear a pending response, send a new prompt, and verify the old answer never appears or joins the new history. Repeat with Stop, view close, plugin disable, and closing the selection modal.
 6. Have a model return a Markdown remote image, HTML image, SVG, iframe, vault embed, and executable-plugin code block. Inspect network traffic: no automatic third-party resources should load in chat. Ordinary links should only open when clicked. Check formatting, copying, metrics, pop-out windows, and a narrow mobile layout.
 7. Generate a selection response, regenerate with an error, and verify Insert stays disabled. Generate successfully and move the cursor: insertion should target the original range. Edit the note or switch its editor's file while generating: insertion must be refused. Inspect raw Markdown before inserting embeds into a real note.
