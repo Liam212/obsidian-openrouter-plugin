@@ -1,7 +1,7 @@
 {
   "id": "openrouter",
   "name": "OpenRouter Chat",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "minAppVersion": "1.11.4",
   "description": "Chat with AI models through OpenRouter, with explicit model selection and integration with selected note text. Requires an OpenRouter account and API key.",
   "author": "AgileAndy",

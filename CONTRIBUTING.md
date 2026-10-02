@@ -6,6 +6,7 @@
 - `src/settings.ts`: validated settings and credential migration.
 - `src/api.ts`: fixed-origin requests, deadlines, cancellation, response validation, and incremental SSE parsing.
 - `src/conversation.ts`: committed chat history and cancellation identities.
+- `src/sensitive-notes.ts`: local privacy controls and protected-history state.
 - `src/models.ts` / `src/ui.ts`: pricing validation and explicit model selection.
 - `src/render.ts`: restricted Markdown-to-DOM rendering.
 - `src/chat-view.ts`, `src/prompt-modal.ts`, `src/settings-tab.ts`: Obsidian UI.
@@ -27,5 +28,7 @@ Automated host mocks and ordinary-browser checks do not establish compatibility 
 6. Have a model return a Markdown remote image, HTML image, SVG, iframe, vault embed, and executable-plugin code block. Inspect network traffic: no automatic third-party resources should load in chat. Ordinary links should only open when clicked. Check formatting, copying, metrics, pop-out windows, and a narrow mobile layout.
 7. Generate a selection response, regenerate with an error, and verify Insert stays disabled. Generate successfully and move the cursor: insertion should target the original range. Edit the note or switch its editor's file while generating: insertion must be refused. Inspect raw Markdown before inserting embeds into a real note.
 8. Toggle web search explicitly and verify free-only mode prevents requests that could add search charges. Confirm provider request bodies use the selected model unchanged.
+9. Enable Sensitive notes separately in chat and a selection prompt. With streaming on and off, inspect outgoing requests for `provider.zdr: true`, `provider.data_collection: "deny"`, the disabled web plugin, and `X-OpenRouter-Cache: false`. Confirm search is unavailable while sensitive mode is on and its saved preference returns when it is off. Test an unavailable ZDR model: there must be no retry with weaker constraints or paid replacement. Verify the account has no enforced web plugin or content-logging integration that conflicts with the intended policy.
+10. After a successful sensitive chat request, verify follow-ups stay protected and the switch cannot be turned off until Clear chat. Clear during a pending request and confirm a late response cannot restore its history. In the selection modal, switching privacy mode after generation must disable Insert. Toggle Sensitive notes by default, reopen a chat/prompt, and reload the plugin to check persistence; already-open views must retain their own choice.
 
 The development work verifies mocked network and DOM behavior. A real host session and authenticated provider behavior must be recorded separately; passing automated tests is not a claim of a complete security audit.

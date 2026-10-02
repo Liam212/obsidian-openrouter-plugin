@@ -140,6 +140,7 @@ interface CompletionRequest {
   model: string;
   messages: Message[];
   settings: Settings;
+  sensitiveNotes?: boolean;
   signal?: AbortSignal;
   onText?: (content: string) => void;
 }
@@ -210,19 +211,29 @@ export class OpenRouterClient {
 
   async complete(options: CompletionRequest): Promise<Completion> {
     const { model, settings, messages, signal, onText } = options;
+    const sensitiveNotes = options.sensitiveNotes === true;
+    const useWebSearch = settings.useWebSearch && !sensitiveNotes;
     const selected = settings.cachedModels.find(candidate => candidate.id === model);
     if (!model || !selected) throw new Error('Choose an available model before sending. Refresh the model list if needed.');
+    if (sensitiveNotes && model.split(':').includes('online')) throw new Error('Choose a model without the :online web-search variant for Sensitive notes.');
     if (settings.showFreeModelsOnly && !selected.isFree) throw new Error('Choose a model with verified free inference, or turn off the free-only filter.');
-    if (settings.showFreeModelsOnly && settings.useWebSearch) throw new Error('Web search may cost money. Turn off free-only mode before enabling it.');
+    if (settings.showFreeModelsOnly && useWebSearch) throw new Error('Web search may cost money. Turn off free-only mode before enabling it.');
     const key = this.getKey()?.trim();
     if (!key) throw new Error('Select an OpenRouter API key in the plugin settings.');
     const started = Date.now();
     return this.request('chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, 'HTTP-Referer': 'https://obsidian.md', 'X-Title': 'Obsidian OpenRouter Chat' },
+      headers: {
+        'Content-Type': 'application/json', Authorization: `Bearer ${key}`, 'HTTP-Referer': 'https://obsidian.md', 'X-Title': 'Obsidian OpenRouter Chat',
+        ...(sensitiveNotes ? { 'X-OpenRouter-Cache': 'false' } : {})
+      },
       body: JSON.stringify({
         model, messages, stream: settings.useStreaming, max_tokens: settings.maxOutputTokens,
-        ...(settings.useWebSearch ? { plugins: [{ id: 'web' }] } : {})
+        ...(sensitiveNotes ? {
+          provider: { zdr: true, data_collection: 'deny' },
+          // Explicitly override an account's web-search default, not just the local toggle.
+          plugins: [{ id: 'web', enabled: false }]
+        } : useWebSearch ? { plugins: [{ id: 'web' }] } : {})
       })
     }, settings.requestTimeoutSeconds * 1000, signal, async (response, requestSignal) => {
       if (settings.useStreaming) {

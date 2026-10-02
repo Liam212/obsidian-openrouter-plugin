@@ -33,6 +33,12 @@ export class OpenRouterSettingTab extends PluginSettingTab {
         void this.host.saveSettings();
       });
     });
+    new Setting(this.containerEl).setName('Sensitive notes by default').setDesc('Start new chats and note prompts with Sensitive notes enabled. Requires Zero Data Retention hosts and denies data collection; disables web search and response caching. Availability and cost may change. You can switch it per chat or prompt.').addToggle(toggle => {
+      toggle.setValue(this.host.settings.sensitiveNotesByDefault).onChange(value => {
+        this.host.settings.sensitiveNotesByDefault = value;
+        void this.host.saveSettings();
+      });
+    });
     this.numberSetting('Request timeout', 'Maximum request duration in seconds (10–600).', 'requestTimeoutSeconds', 10, 600);
     this.numberSetting('Maximum output tokens', 'Limits response length and potential cost (64–32768). Provider charges and context limits still apply.', 'maxOutputTokens', 64, 32768);
     element(this.containerEl, 'p', 'openrouter-privacy-hint', 'The secret store is not isolation from other installed plugins or software on your device. Chat is kept in memory and is sent with subsequent messages. Clear chat cancels the pending request and discards this history.');

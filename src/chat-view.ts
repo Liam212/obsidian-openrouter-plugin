@@ -4,6 +4,7 @@ import { Conversation } from './conversation';
 import { renderMessage } from './render';
 import { button, element, ModelPicker, type PluginHost } from './ui';
 import type { Completion } from './types';
+import { SensitiveNotesControl } from './sensitive-notes';
 
 export const VIEW_TYPE = 'openrouter-chat-view';
 
@@ -14,6 +15,8 @@ export class ChatView extends ItemView {
   private messages!: HTMLElement;
   private sendButton!: HTMLButtonElement;
   private stopButton!: HTMLButtonElement;
+  private sensitiveNotes!: SensitiveNotesControl;
+  private webSearch!: HTMLInputElement;
   private epoch = 0;
   private closed = false;
   private activeResponse: HTMLElement | null = null;
@@ -34,12 +37,18 @@ export class ChatView extends ItemView {
     const header = element(this.contentEl, 'div', 'openrouter-chat-header');
     element(header, 'h3', '', 'OpenRouter Chat');
     this.picker = new ModelPicker(header, this.host);
+    this.sensitiveNotes = new SensitiveNotesControl(header, this.host.settings.sensitiveNotesByDefault, () => this.updatePrivacyControls());
     const searchLabel = element(header, 'label', 'openrouter-websearch-label');
     const webSearch = element(searchLabel, 'input');
+    this.webSearch = webSearch;
     webSearch.type = 'checkbox';
     webSearch.checked = this.host.settings.useWebSearch;
     searchLabel.append('Web search (additional charges may apply)');
     webSearch.addEventListener('change', () => {
+      if (this.sensitiveNotes.enabled || this.conversation.busy) {
+        this.updatePrivacyControls();
+        return;
+      }
       if (webSearch.checked && this.host.settings.showFreeModelsOnly) {
         webSearch.checked = false;
         new Notice('Turn off free-only mode before enabling paid web search.');
@@ -72,7 +81,14 @@ export class ChatView extends ItemView {
     this.sendButton.disabled = busy;
     this.stopButton.disabled = !busy;
     this.picker.setDisabled(busy);
+    this.updatePrivacyControls(busy);
     this.messages.setAttribute('aria-busy', String(busy));
+  }
+
+  private updatePrivacyControls(busy = this.conversation.busy): void {
+    this.sensitiveNotes.setState(busy, this.conversation.requiresSensitiveNotes);
+    this.webSearch.disabled = busy || this.sensitiveNotes.enabled;
+    this.webSearch.checked = this.host.settings.useWebSearch && !this.sensitiveNotes.enabled;
   }
 
   private message(role: string): { message: HTMLElement; content: HTMLElement } {
@@ -106,6 +122,7 @@ export class ChatView extends ItemView {
     if (!this.picker.value) { new Notice('Choose an available model first.'); return; }
     const epoch = ++this.epoch;
     const model = this.picker.value;
+    const sensitiveNotes = this.sensitiveNotes.enabled;
     this.textarea.value = '';
     renderMessage(content, this.message('User').content);
     const answer = this.message('Assistant');
@@ -113,14 +130,17 @@ export class ChatView extends ItemView {
     this.activeResponse = answer.content;
     this.setBusy(true);
     try {
-      const result = await this.conversation.send(content, model, this.host.settings, text => {
-        if (this.epoch !== epoch || this.closed) return;
-        answer.content.textContent = text;
-        this.scroll();
+      const result = await this.conversation.send(content, model, this.host.settings, {
+        sensitiveNotes,
+        onText: text => {
+          if (this.epoch !== epoch || this.closed) return;
+          answer.content.textContent = text;
+          this.scroll();
+        }
       });
       if (this.epoch !== epoch || this.closed) return;
       renderMessage(result.content, answer.content);
-      this.addActions(answer.message, result, model);
+      this.addActions(answer.message, result, model, sensitiveNotes);
     } catch (error) {
       if (this.epoch !== epoch || this.closed) return;
       answer.content.textContent = isAbort(error) ? 'Cancelled.' : `${errorMessage(error)} This exchange was not added to the conversation context.`;
@@ -134,7 +154,7 @@ export class ChatView extends ItemView {
     }
   }
 
-  private addActions(parent: HTMLElement, result: Completion, model: string): void {
+  private addActions(parent: HTMLElement, result: Completion, model: string, sensitiveNotes: boolean): void {
     const copy = button(parent, 'Copy', 'openrouter-copy-button', () => {
       void (async () => {
         try {
@@ -145,7 +165,7 @@ export class ChatView extends ItemView {
     });
     const details = element(parent, 'details', 'openrouter-response-metrics');
     element(details, 'summary', '', 'Response metrics');
-    const text = [`Model: ${model}`, `Total time: ${result.totalMs} ms`,
+    const text = [`Model: ${model}`, `Privacy: ${sensitiveNotes ? 'Sensitive notes — ZDR required' : 'Account defaults'}`, `Total time: ${result.totalMs} ms`,
       result.firstTokenMs === null ? 'First token: unavailable for non-streaming responses' : `First token: ${result.firstTokenMs} ms`,
       result.completionTokens === null ? 'Token count: not reported' : `Output tokens: ${result.completionTokens}`];
     element(details, 'div', '', text.join('\n'));

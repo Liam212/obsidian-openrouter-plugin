@@ -33,6 +33,19 @@ On upgrade, an existing plaintext `apiKey` is migrated to Obsidian's secret stor
 
 Settings include a system message, streaming, request timeout (default 120 seconds), and maximum output tokens (default 4096). Model-list requests have a 30-second timeout. API/provider limits may be lower.
 
+## Sensitive notes
+
+**Sensitive notes (require ZDR)** is off by default. Turn it on in chat or the selection prompt before sending sensitive text. Each request made with it enabled requires Zero Data Retention model hosts, denies provider data collection, and explicitly disables OpenRouter web search and response caching. It works with streaming and non-streaming responses.
+
+- The switch is local to that chat or prompt. Ordinary requests use your OpenRouter account defaults; switching it off never overrides stricter account privacy rules.
+- After a successful sensitive chat exchange, the switch stays on and locks because follow-up requests include that history. Use **Clear chat**, then turn it off for ordinary messages. Failed or cancelled exchanges are not included in later requests. Enabling it later cannot change how earlier requests were handled.
+- Selection prompts have no conversation history, so you can switch before each generation. Changing the switch clears the previous response and disables Insert until you generate again.
+- The optional **Sensitive notes by default** plugin setting starts new chats and selection prompts with it on. It does not change views already open.
+- Sensitive mode temporarily disables the plugin's Web search control, preserving your saved preference. Models with an `:online` search variant are rejected. The selected model and free-only filter remain in effect.
+- ZDR can reduce available hosts and increase cost; there is no fixed surcharge. The model picker shows catalog pricing, not a quote for a specific ZDR host. If no compatible endpoint is available, the request fails; the plugin never retries with weaker privacy settings or selects a paid replacement.
+
+This controls model-host routing, not every account service: OpenRouter prompt logging, observability integrations, and account-enforced plugins still require separate configuration. In particular, an enforced web plugin can prevent per-request disabling. Content still goes to OpenRouter and its model hosts. See [Security boundaries](SECURITY.md#sensitive-request-policy) for the exact request policy and limitations.
+
 ## Privacy and security
 
 Typed messages, successful conversation history, the system message, and explicitly submitted selected text are sent to OpenRouter and routed to model providers. There is no automatic note indexing, full-vault upload, analytics, chat persistence, or background model-generated action execution. The public model catalog is refreshed on startup when the cache is empty or older than one day; this request does not include an API key. Ordinary links connect externally only when clicked.

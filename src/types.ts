@@ -15,6 +15,7 @@ export interface Settings {
   showFreeModelsOnly: boolean;
   useWebSearch: boolean;
   useStreaming: boolean;
+  sensitiveNotesByDefault: boolean;
   requestTimeoutSeconds: number;
   maxOutputTokens: number;
 }

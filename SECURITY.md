@@ -11,6 +11,25 @@ This document describes intended protections, not a guarantee that this plugin o
 - Secrets migrate out of legacy settings only after storage succeeds and the secret can be read back. Settings writes use a whitelist and an ordered queue.
 - Obsidian SecretStorage is not plugin isolation, and this project makes no encryption-at-rest claim. Previous backups and external copies of `data.json` are outside migration's reach.
 
+## Sensitive request policy
+
+Sensitive notes is an explicit per-request choice, initially off. The saved `sensitiveNotesByDefault` boolean only initializes new chat/prompt controls. Both streaming and non-streaming requests with the switch enabled send:
+
+```json
+{
+  "provider": { "zdr": true, "data_collection": "deny" },
+  "plugins": [{ "id": "web", "enabled": false }]
+}
+```
+
+They also send the `X-OpenRouter-Cache: false` header. This follows OpenRouter's [ZDR routing](https://openrouter.ai/docs/guides/features/zdr), [provider data-collection filters](https://openrouter.ai/docs/guides/routing/provider-selection), [plugin overrides](https://openrouter.ai/docs/guides/features/plugins/overview), and [response-cache controls](https://openrouter.ai/docs/guides/features/response-caching). Per-request ZDR alone does not disable OpenRouter response caching, so the explicit header is required. Provider in-memory prompt caching may still be allowed under OpenRouter's ZDR definition; this setting does not promise no transient processing or storage.
+
+Normal requests omit these provider and cache overrides rather than sending `zdr: false` or allowing collection. Neither mode weakens account-level ZDR restrictions. The selected model is unchanged, web-search model variants are rejected in sensitive mode, and the plugin never retries failed sensitive requests with relaxed restrictions. OpenRouter may route between endpoints that meet the requested constraints; this is gateway enforcement based on provider policies, not independent verification by the plugin.
+
+Successful sensitive exchanges mark in-memory chat history as requiring sensitive routing. UI controls cannot be downgraded while sending or while that history remains, and the conversation layer independently rejects ordinary sends with sensitive history. Only clearing the conversation removes that restriction. Cancelled/failed exchanges are excluded from history, and late completions cannot restore cleared history. The selection modal has no follow-up history and invalidates an insertable result if its privacy choice changes.
+
+ZDR is a model-endpoint policy, not a complete account or device privacy boundary. Account prompt logging, observability exports, and third-party tools/plugins have their own policies. OpenRouter's **Prevent overrides** plugin setting can force web search despite a request-level disable; configure the account accordingly before using sensitive text. This plugin does not inspect those account settings. Operational/billing metadata, local vault files, clipboard contents, other Obsidian plugins, and content already sent before enabling the switch are outside this request policy.
+
 ## Untrusted output
 
 Chat uses a Markdown token parser and an allowlist of DOM elements. It does not use `innerHTML`, Obsidian's MarkdownRenderer, external images/media, inline CSS, raw HTML, executable code blocks, or plugin postprocessors. Only explicit HTTP(S) links without embedded credentials become clickable. Links suppress referrer and opener access. Streaming output is plain text until completion.

@@ -23,6 +23,7 @@ export function readSettings(raw: unknown): Settings {
     showFreeModelsOnly: data.showFreeModelsOnly === true,
     useWebSearch: data.useWebSearch === true,
     useStreaming: typeof data.useStreaming === 'boolean' ? data.useStreaming : true,
+    sensitiveNotesByDefault: data.sensitiveNotesByDefault === true,
     requestTimeoutSeconds: integer(data.requestTimeoutSeconds, 120, 10, 600),
     maxOutputTokens: integer(data.maxOutputTokens, 4096, 64, 32768)
   };

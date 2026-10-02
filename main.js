@@ -297,22 +297,35 @@ var OpenRouterClient = class {
   }
   async complete(options) {
     const { model, settings, messages, signal, onText } = options;
+    const sensitiveNotes = options.sensitiveNotes === true;
+    const useWebSearch = settings.useWebSearch && !sensitiveNotes;
     const selected = settings.cachedModels.find((candidate) => candidate.id === model);
     if (!model || !selected) throw new Error("Choose an available model before sending. Refresh the model list if needed.");
+    if (sensitiveNotes && model.split(":").includes("online")) throw new Error("Choose a model without the :online web-search variant for Sensitive notes.");
     if (settings.showFreeModelsOnly && !selected.isFree) throw new Error("Choose a model with verified free inference, or turn off the free-only filter.");
-    if (settings.showFreeModelsOnly && settings.useWebSearch) throw new Error("Web search may cost money. Turn off free-only mode before enabling it.");
+    if (settings.showFreeModelsOnly && useWebSearch) throw new Error("Web search may cost money. Turn off free-only mode before enabling it.");
     const key = this.getKey()?.trim();
     if (!key) throw new Error("Select an OpenRouter API key in the plugin settings.");
     const started = Date.now();
     return this.request("chat/completions", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "HTTP-Referer": "https://obsidian.md", "X-Title": "Obsidian OpenRouter Chat" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+        "HTTP-Referer": "https://obsidian.md",
+        "X-Title": "Obsidian OpenRouter Chat",
+        ...sensitiveNotes ? { "X-OpenRouter-Cache": "false" } : {}
+      },
       body: JSON.stringify({
         model,
         messages,
         stream: settings.useStreaming,
         max_tokens: settings.maxOutputTokens,
-        ...settings.useWebSearch ? { plugins: [{ id: "web" }] } : {}
+        ...sensitiveNotes ? {
+          provider: { zdr: true, data_collection: "deny" },
+          // Explicitly override an account's web-search default, not just the local toggle.
+          plugins: [{ id: "web", enabled: false }]
+        } : useWebSearch ? { plugins: [{ id: "web" }] } : {}
       })
     }, settings.requestTimeoutSeconds * 1e3, signal, async (response, requestSignal) => {
       if (settings.useStreaming) {
@@ -348,8 +361,12 @@ var Conversation = class {
   client;
   history = [];
   pending = null;
+  sensitiveHistory = false;
   get busy() {
     return this.pending !== null;
+  }
+  get requiresSensitiveNotes() {
+    return this.sensitiveHistory;
   }
   cancel() {
     const pending = this.pending;
@@ -359,9 +376,12 @@ var Conversation = class {
   clear() {
     this.cancel();
     this.history = [];
+    this.sensitiveHistory = false;
   }
-  async send(content, model, settings, onText) {
+  async send(content, model, settings, options = {}) {
     if (this.pending) throw new Error("A response is already in progress.");
+    const sensitiveNotes = options.sensitiveNotes === true;
+    if (this.sensitiveHistory && !sensitiveNotes) throw new Error("Clear chat before turning off Sensitive notes. This conversation contains sensitive messages.");
     const controller = new AbortController();
     this.pending = controller;
     const snapshot = { ...settings, cachedModels: [...settings.cachedModels] };
@@ -371,14 +391,16 @@ var Conversation = class {
       const result = await this.client.complete({
         model,
         settings: snapshot,
+        sensitiveNotes,
         messages: [{ role: "system", content: snapshot.systemMessage }, ...history],
         signal: controller.signal,
         onText: (text2) => {
-          if (this.pending === controller) onText?.(text2);
+          if (this.pending === controller) options.onText?.(text2);
         }
       });
       if (this.pending !== controller || controller.signal.aborted) throw abortError();
       this.history = [...history, { role: "assistant", content: result.content }];
+      this.sensitiveHistory ||= sensitiveNotes;
       return result;
     } finally {
       if (this.pending === controller) this.pending = null;
@@ -5809,6 +5831,52 @@ var ModelPicker = class {
   }
 };
 
+// src/sensitive-notes.ts
+var nextDescriptionId = 0;
+var SensitiveNotesControl = class {
+  checkbox;
+  description;
+  active;
+  busy = false;
+  locked = false;
+  constructor(parent, enabled, onChange = () => void 0) {
+    this.active = enabled;
+    const container = element(parent, "div", "openrouter-sensitive-notes");
+    const label = element(container, "label", "openrouter-sensitive-label");
+    this.checkbox = element(label, "input");
+    this.checkbox.type = "checkbox";
+    this.checkbox.checked = enabled;
+    label.append("Sensitive notes (require ZDR)");
+    this.description = element(container, "p", "openrouter-privacy-hint");
+    this.description.id = `openrouter-sensitive-description-${nextDescriptionId++}`;
+    this.description.setAttribute("aria-live", "polite");
+    this.checkbox.setAttribute("aria-describedby", this.description.id);
+    this.checkbox.addEventListener("change", () => {
+      if (!this.busy && !this.locked) {
+        this.active = this.checkbox.checked;
+        onChange();
+      }
+      this.render();
+    });
+    this.render();
+  }
+  get enabled() {
+    return this.active;
+  }
+  setState(busy, locked = false) {
+    this.busy = busy;
+    this.locked = locked;
+    if (locked) this.active = true;
+    this.render();
+  }
+  render() {
+    this.checkbox.checked = this.active;
+    this.checkbox.disabled = this.busy || this.locked;
+    this.description.textContent = this.locked ? "Clear chat before turning this off: follow-ups include sensitive history. Requests require ZDR and disable web search and response caching." : this.active ? "Requires ZDR hosts and denies data collection. Requests disable web search and response caching. Cost and availability may change." : "Optional protection for this request. Requires ZDR hosts, which may change cost and availability.";
+    if (this.active) this.description.append(" Account logging and enforced plugins still apply.");
+  }
+};
+
 // src/chat-view.ts
 var VIEW_TYPE = "openrouter-chat-view";
 var ChatView = class extends import_obsidian.ItemView {
@@ -5824,6 +5892,8 @@ var ChatView = class extends import_obsidian.ItemView {
   messages;
   sendButton;
   stopButton;
+  sensitiveNotes;
+  webSearch;
   epoch = 0;
   closed = false;
   activeResponse = null;
@@ -5843,12 +5913,18 @@ var ChatView = class extends import_obsidian.ItemView {
     const header = element(this.contentEl, "div", "openrouter-chat-header");
     element(header, "h3", "", "OpenRouter Chat");
     this.picker = new ModelPicker(header, this.host);
+    this.sensitiveNotes = new SensitiveNotesControl(header, this.host.settings.sensitiveNotesByDefault, () => this.updatePrivacyControls());
     const searchLabel = element(header, "label", "openrouter-websearch-label");
     const webSearch = element(searchLabel, "input");
+    this.webSearch = webSearch;
     webSearch.type = "checkbox";
     webSearch.checked = this.host.settings.useWebSearch;
     searchLabel.append("Web search (additional charges may apply)");
     webSearch.addEventListener("change", () => {
+      if (this.sensitiveNotes.enabled || this.conversation.busy) {
+        this.updatePrivacyControls();
+        return;
+      }
       if (webSearch.checked && this.host.settings.showFreeModelsOnly) {
         webSearch.checked = false;
         new import_obsidian.Notice("Turn off free-only mode before enabling paid web search.");
@@ -5882,7 +5958,13 @@ var ChatView = class extends import_obsidian.ItemView {
     this.sendButton.disabled = busy;
     this.stopButton.disabled = !busy;
     this.picker.setDisabled(busy);
+    this.updatePrivacyControls(busy);
     this.messages.setAttribute("aria-busy", String(busy));
+  }
+  updatePrivacyControls(busy = this.conversation.busy) {
+    this.sensitiveNotes.setState(busy, this.conversation.requiresSensitiveNotes);
+    this.webSearch.disabled = busy || this.sensitiveNotes.enabled;
+    this.webSearch.checked = this.host.settings.useWebSearch && !this.sensitiveNotes.enabled;
   }
   message(role) {
     const message = element(this.messages, "div", `openrouter-message openrouter-message-${role.toLowerCase()}`);
@@ -5916,6 +5998,7 @@ var ChatView = class extends import_obsidian.ItemView {
     }
     const epoch = ++this.epoch;
     const model = this.picker.value;
+    const sensitiveNotes = this.sensitiveNotes.enabled;
     this.textarea.value = "";
     renderMessage(content, this.message("User").content);
     const answer = this.message("Assistant");
@@ -5923,14 +6006,17 @@ var ChatView = class extends import_obsidian.ItemView {
     this.activeResponse = answer.content;
     this.setBusy(true);
     try {
-      const result = await this.conversation.send(content, model, this.host.settings, (text2) => {
-        if (this.epoch !== epoch || this.closed) return;
-        answer.content.textContent = text2;
-        this.scroll();
+      const result = await this.conversation.send(content, model, this.host.settings, {
+        sensitiveNotes,
+        onText: (text2) => {
+          if (this.epoch !== epoch || this.closed) return;
+          answer.content.textContent = text2;
+          this.scroll();
+        }
       });
       if (this.epoch !== epoch || this.closed) return;
       renderMessage(result.content, answer.content);
-      this.addActions(answer.message, result, model);
+      this.addActions(answer.message, result, model, sensitiveNotes);
     } catch (error2) {
       if (this.epoch !== epoch || this.closed) return;
       answer.content.textContent = isAbort(error2) ? "Cancelled." : `${errorMessage(error2)} This exchange was not added to the conversation context.`;
@@ -5943,7 +6029,7 @@ var ChatView = class extends import_obsidian.ItemView {
       }
     }
   }
-  addActions(parent, result, model) {
+  addActions(parent, result, model, sensitiveNotes) {
     const copy = button(parent, "Copy", "openrouter-copy-button", () => {
       void (async () => {
         try {
@@ -5958,6 +6044,7 @@ var ChatView = class extends import_obsidian.ItemView {
     element(details, "summary", "", "Response metrics");
     const text2 = [
       `Model: ${model}`,
+      `Privacy: ${sensitiveNotes ? "Sensitive notes \u2014 ZDR required" : "Account defaults"}`,
       `Total time: ${result.totalMs} ms`,
       result.firstTokenMs === null ? "First token: unavailable for non-streaming responses" : `First token: ${result.firstTokenMs} ms`,
       result.completionTokens === null ? "Token count: not reported" : `Output tokens: ${result.completionTokens}`
@@ -5994,12 +6081,18 @@ var PromptModal = class extends import_obsidian2.Modal {
   response;
   insertButton;
   generateButton;
+  sensitiveNotes;
   closed = false;
   onOpen() {
     this.closed = false;
     this.contentEl.classList.add("openrouter-modal");
     element(this.contentEl, "h2", "", "OpenRouter prompt");
     this.picker = new ModelPicker(this.contentEl, this.host);
+    this.sensitiveNotes = new SensitiveNotesControl(this.contentEl, this.host.settings.sensitiveNotesByDefault, () => {
+      this.result = null;
+      this.insertButton.disabled = true;
+      this.response.textContent = "Privacy mode changed. Generate a new response.";
+    });
     element(this.contentEl, "p", "openrouter-privacy-hint", "Generate sends the selected text to OpenRouter and the selected model\u2019s providers. Insert replaces the original selection with raw Markdown; Obsidian may render its embeds in the note.");
     element(this.contentEl, "h3", "", "Selected text");
     element(this.contentEl, "div", "openrouter-modal-prompt", this.prompt);
@@ -6029,12 +6122,14 @@ var PromptModal = class extends import_obsidian2.Modal {
     this.request = request;
     this.generateButton.disabled = true;
     this.picker.setDisabled(true);
+    this.sensitiveNotes.setState(true);
     this.response.textContent = "Thinking\u2026";
     try {
       const settings = { ...this.host.settings, cachedModels: [...this.host.settings.cachedModels] };
       const result = await this.host.client.complete({
         model: this.picker.value,
         settings,
+        sensitiveNotes: this.sensitiveNotes.enabled,
         messages: [{ role: "system", content: settings.systemMessage }, { role: "user", content: this.prompt }],
         signal: request.signal,
         onText: (text2) => {
@@ -6053,6 +6148,7 @@ var PromptModal = class extends import_obsidian2.Modal {
         if (!this.closed) {
           this.generateButton.disabled = false;
           this.picker.setDisabled(false);
+          this.sensitiveNotes.setState(false);
         }
       }
     }
@@ -6084,6 +6180,7 @@ function readSettings(raw) {
     showFreeModelsOnly: data.showFreeModelsOnly === true,
     useWebSearch: data.useWebSearch === true,
     useStreaming: typeof data.useStreaming === "boolean" ? data.useStreaming : true,
+    sensitiveNotesByDefault: data.sensitiveNotesByDefault === true,
     requestTimeoutSeconds: integer(data.requestTimeoutSeconds, 120, 10, 600),
     maxOutputTokens: integer(data.maxOutputTokens, 4096, 64, 32768)
   };
@@ -6137,6 +6234,12 @@ var OpenRouterSettingTab = class extends import_obsidian3.PluginSettingTab {
     new import_obsidian3.Setting(this.containerEl).setName("Stream responses").setDesc("Display text as it arrives.").addToggle((toggle) => {
       toggle.setValue(this.host.settings.useStreaming).onChange((value) => {
         this.host.settings.useStreaming = value;
+        void this.host.saveSettings();
+      });
+    });
+    new import_obsidian3.Setting(this.containerEl).setName("Sensitive notes by default").setDesc("Start new chats and note prompts with Sensitive notes enabled. Requires Zero Data Retention hosts and denies data collection; disables web search and response caching. Availability and cost may change. You can switch it per chat or prompt.").addToggle((toggle) => {
+      toggle.setValue(this.host.settings.sensitiveNotesByDefault).onChange((value) => {
+        this.host.settings.sensitiveNotesByDefault = value;
         void this.host.saveSettings();
       });
     });
