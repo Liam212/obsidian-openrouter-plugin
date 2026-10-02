@@ -5900,6 +5900,8 @@ var ChatView = class extends import_obsidian.ItemView {
   epoch = 0;
   closed = false;
   activeResponse = null;
+  selection = null;
+  selectionContainer;
   getViewType() {
     return VIEW_TYPE;
   }
@@ -5940,6 +5942,9 @@ var ChatView = class extends import_obsidian.ItemView {
     this.messages = element(this.contentEl, "div", "openrouter-messages-container");
     this.messages.setAttribute("aria-label", "Conversation");
     const input = element(this.contentEl, "div", "openrouter-input-container");
+    this.selectionContainer = element(input, "div", "openrouter-attached-selection");
+    this.selectionContainer.setAttribute("aria-label", "Attached selection");
+    this.renderAttachedSelection();
     this.textarea = element(input, "textarea", "openrouter-input");
     this.textarea.placeholder = "Type your message\u2026";
     this.textarea.setAttribute("aria-label", "Message");
@@ -5978,6 +5983,40 @@ var ChatView = class extends import_obsidian.ItemView {
   scroll() {
     this.messages.scrollTop = this.messages.scrollHeight;
   }
+  /** Stage only the explicit selection in memory; never send on attachment. */
+  addSelection(text2) {
+    if (this.closed || !this.textarea || !text2.trim()) return false;
+    if (this.conversation.busy) {
+      new import_obsidian.Notice("Wait for the response or press Stop before attaching a selection.");
+      return false;
+    }
+    if (this.selection !== null) {
+      new import_obsidian.Notice("A selection is already attached. Send or remove it before adding another.");
+      return false;
+    }
+    this.selection = text2;
+    this.renderAttachedSelection();
+    this.textarea.focus();
+    return true;
+  }
+  selectionPreview(parent, text2) {
+    const details = element(parent, "details", "openrouter-selection-details");
+    element(details, "summary", "", "Selected text");
+    element(details, "div", "openrouter-selection-preview", text2);
+  }
+  renderAttachedSelection() {
+    this.selectionContainer.replaceChildren();
+    this.selectionContainer.hidden = this.selection === null;
+    if (this.textarea) this.textarea.placeholder = this.selection === null ? "Type your message\u2026" : "Ask about the selected text\u2026";
+    if (this.selection === null) return;
+    this.selectionPreview(this.selectionContainer, this.selection);
+    button(this.selectionContainer, "Remove selection", "openrouter-remove-selection", () => {
+      this.selection = null;
+      this.renderAttachedSelection();
+      this.textarea.focus();
+    });
+    element(this.selectionContainer, "p", "openrouter-privacy-hint", "Included with your next message. Type an instruction below, then press Send.");
+  }
   stop() {
     this.epoch++;
     this.conversation.cancel();
@@ -5990,11 +6029,13 @@ var ChatView = class extends import_obsidian.ItemView {
     this.conversation.clear();
     this.activeResponse = null;
     this.messages.replaceChildren();
+    this.selection = null;
+    this.renderAttachedSelection();
     this.setBusy(false);
   }
   async send() {
-    const content = this.textarea.value.trim();
-    if (!content || this.conversation.busy || this.closed) return;
+    const instruction = this.textarea.value.trim();
+    if (!instruction || this.conversation.busy || this.closed) return;
     if (!this.picker.value) {
       new import_obsidian.Notice("Choose an available model first.");
       return;
@@ -6002,8 +6043,19 @@ var ChatView = class extends import_obsidian.ItemView {
     const epoch = ++this.epoch;
     const model = this.picker.value;
     const sensitiveNotes = this.sensitiveNotes.enabled;
+    const selection = this.selection;
+    const content = selection === null ? instruction : `Selected text (context):
+
+${selection}
+
+My instruction:
+${instruction}`;
+    this.selection = null;
+    this.renderAttachedSelection();
     this.textarea.value = "";
-    renderMessage(content, this.message("User").content);
+    const user = this.message("User").content;
+    if (selection !== null) this.selectionPreview(user, selection);
+    renderMessage(instruction, element(user, "div"));
     const answer = this.message("Assistant");
     answer.content.textContent = "Thinking\u2026";
     this.activeResponse = answer.content;
@@ -6023,7 +6075,11 @@ var ChatView = class extends import_obsidian.ItemView {
     } catch (error2) {
       if (this.epoch !== epoch || this.closed) return;
       answer.content.textContent = isAbort(error2) ? "Cancelled." : `${errorMessage(error2)} This exchange was not added to the conversation context.`;
-      if (!this.textarea.value) this.textarea.value = content;
+      if (!this.textarea.value && this.selection === null) {
+        this.textarea.value = instruction;
+        this.selection = selection;
+        this.renderAttachedSelection();
+      }
     } finally {
       if (this.epoch === epoch && !this.closed) {
         this.activeResponse = null;
@@ -6060,6 +6116,7 @@ var ChatView = class extends import_obsidian.ItemView {
     this.conversation.clear();
     this.picker?.destroy();
     this.activeResponse = null;
+    this.selection = null;
     this.contentEl.replaceChildren();
   }
 };
@@ -6338,6 +6395,24 @@ var OpenRouterPlugin = class extends import_obsidian5.Plugin {
       void this.refreshModels();
     } });
     this.addCommand({ id: "insert-openrouter-response", name: "Generate from selection and insert response", editorCallback: (editor, context) => this.openPrompt(editor, context) });
+    this.addCommand({
+      id: "add-selection-to-chat",
+      name: "Add selection to chat",
+      icon: "message-square-plus",
+      editorCheckCallback: (checking, editor) => {
+        const selection = editor.getSelection();
+        if (!selection.trim() || this.stopped) return false;
+        if (!checking) void this.addSelectionToChat(selection);
+        return true;
+      }
+    });
+    this.registerEvent(this.app.workspace.on("editor-menu", (menu, editor) => {
+      const selection = editor.getSelection();
+      if (!selection.trim() || this.stopped) return;
+      menu.addItem((item) => item.setTitle("Add selection to OpenRouter chat").setIcon("message-square-plus").onClick(() => {
+        void this.addSelectionToChat(selection);
+      }));
+    }));
     this.addSettingTab(new OpenRouterSettingTab(this.app, this));
     if (!this.settings.cachedModels.length || Date.now() - this.settings.lastModelUpdate > 864e5) void this.refreshModels();
   }
@@ -6394,12 +6469,25 @@ var OpenRouterPlugin = class extends import_obsidian5.Plugin {
       this.refresh = null;
     }
   }
+  async addSelectionToChat(selection) {
+    const view = await this.activateView();
+    if (!this.stopped) view?.addSelection(selection);
+  }
   async activateView() {
-    const workspace = this.app.workspace;
-    const existing = workspace.getLeavesOfType(VIEW_TYPE)[0];
-    const leaf = existing ?? workspace.getRightLeaf(false) ?? workspace.getLeaf("split");
-    if (!existing) await leaf.setViewState({ type: VIEW_TYPE, active: true });
-    await workspace.revealLeaf(leaf);
+    if (this.stopped) return null;
+    try {
+      const workspace = this.app.workspace;
+      const existing = workspace.getLeavesOfType(VIEW_TYPE)[0];
+      const leaf = existing ?? workspace.getRightLeaf(false) ?? workspace.getLeaf("split");
+      if (!existing) await leaf.setViewState({ type: VIEW_TYPE, active: true });
+      await leaf.loadIfDeferred();
+      if (this.stopped) return null;
+      await workspace.revealLeaf(leaf);
+      if (!this.stopped && leaf.view instanceof ChatView) return leaf.view;
+    } catch {
+      if (!this.stopped) new import_obsidian5.Notice("Could not open OpenRouter chat. Reopen it and try again.");
+    }
+    return null;
   }
   onunload() {
     this.stopped = true;

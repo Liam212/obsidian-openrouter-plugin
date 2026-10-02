@@ -35,6 +35,22 @@ export default class OpenRouterPlugin extends Plugin {
     this.addCommand({ id: 'open-openrouter-chat', name: 'Open chat', callback: () => { void this.activateView(); } });
     this.addCommand({ id: 'refresh-openrouter-models', name: 'Refresh models', callback: () => { void this.refreshModels(); } });
     this.addCommand({ id: 'insert-openrouter-response', name: 'Generate from selection and insert response', editorCallback: (editor, context) => this.openPrompt(editor, context) });
+    this.addCommand({
+      id: 'add-selection-to-chat', name: 'Add selection to chat', icon: 'message-square-plus',
+      editorCheckCallback: (checking, editor) => {
+        const selection = editor.getSelection();
+        if (!selection.trim() || this.stopped) return false;
+        if (!checking) void this.addSelectionToChat(selection);
+        return true;
+      }
+    });
+    this.registerEvent(this.app.workspace.on('editor-menu', (menu, editor) => {
+      // Snapshot before the menu/side pane can move focus or change the selection.
+      const selection = editor.getSelection();
+      if (!selection.trim() || this.stopped) return;
+      menu.addItem(item => item.setTitle('Add selection to OpenRouter chat').setIcon('message-square-plus')
+        .onClick(() => { void this.addSelectionToChat(selection); }));
+    }));
     this.addSettingTab(new OpenRouterSettingTab(this.app, this));
     // Registration is not blocked by an offline/stalled model-list request.
     if (!this.settings.cachedModels.length || Date.now() - this.settings.lastModelUpdate > 86_400_000) void this.refreshModels();
@@ -89,12 +105,26 @@ export default class OpenRouterPlugin extends Plugin {
     finally { this.refresh = null; }
   }
 
-  async activateView(): Promise<void> {
-    const workspace = this.app.workspace;
-    const existing = workspace.getLeavesOfType(VIEW_TYPE)[0];
-    const leaf = existing ?? workspace.getRightLeaf(false) ?? workspace.getLeaf('split');
-    if (!existing) await leaf.setViewState({ type: VIEW_TYPE, active: true });
-    await workspace.revealLeaf(leaf);
+  private async addSelectionToChat(selection: string): Promise<void> {
+    const view = await this.activateView();
+    if (!this.stopped) view?.addSelection(selection);
+  }
+
+  async activateView(): Promise<ChatView | null> {
+    if (this.stopped) return null;
+    try {
+      const workspace = this.app.workspace;
+      const existing = workspace.getLeavesOfType(VIEW_TYPE)[0];
+      const leaf = existing ?? workspace.getRightLeaf(false) ?? workspace.getLeaf('split');
+      if (!existing) await leaf.setViewState({ type: VIEW_TYPE, active: true });
+      await leaf.loadIfDeferred();
+      if (this.stopped) return null;
+      await workspace.revealLeaf(leaf);
+      if (!this.stopped && leaf.view instanceof ChatView) return leaf.view;
+    } catch {
+      if (!this.stopped) new Notice('Could not open OpenRouter chat. Reopen it and try again.');
+    }
+    return null;
   }
 
   onunload(): void {

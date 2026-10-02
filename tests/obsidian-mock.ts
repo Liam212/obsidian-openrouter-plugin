@@ -24,6 +24,7 @@ export class Plugin {
   loadData = vi.fn(async (): Promise<unknown> => null);
   saveData = vi.fn(async (_data: unknown) => undefined);
   registerView = vi.fn();
+  registerEvent = vi.fn();
   addRibbonIcon = vi.fn();
   addCommand = vi.fn((command: Command) => command);
   addSettingTab = vi.fn();

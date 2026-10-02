@@ -10,6 +10,7 @@ This document describes intended protections, not a guarantee that this plugin o
 - No provider error bodies, keys, prompts, or generated answers are written to logs. Error notices use local messages and HTTP status codes.
 - Secrets migrate out of legacy settings only after storage succeeds and the secret can be read back. Settings writes use a whitelist and an ordered queue.
 - Obsidian SecretStorage is not plugin isolation, and this project makes no encryption-at-rest claim. Previous backups and external copies of `data.json` are outside migration's reach.
+- **Add selection to chat** snapshots only `editor.getSelection()` before opening the chat. Staging is local and does not initiate a completion, persist the excerpt, read the whole note, or include its path/name. Preview text is inert. An instruction and explicit Send are required; the selected excerpt then follows the same conversation, Sensitive notes, and failed-request rules as typed text. Clear/close discard pending attachments, and late replies cannot restore them. Existing drafts and attachments are never silently replaced by another selection.
 
 ## Sensitive request policy
 

@@ -39,6 +39,19 @@ On mobile, Stop and timeout stop waiting and discard late replies, but Obsidian'
 
 If model refresh fails, check that `https://openrouter.ai/api/v1/models` opens in Safari or your browser. This public endpoint does not need an API key. If it opens there but not in Obsidian, update this fork through BRAT, reload Obsidian, and refresh again. Versions before 1.2.1 used browser networking on mobile.
 
+## Ask about highlighted text
+
+1. In a note's **editing mode**, highlight a passage.
+2. Run **OpenRouter Chat: Add selection to chat** from the command palette, a hotkey, or your mobile toolbar. On desktop, you can also right-click the selection and choose **Add selection to OpenRouter chat**.
+3. Chat opens with a **Selected text** attachment above the message box. Tap it to inspect the passage, or use **Remove selection** to discard it. Your existing instruction draft is preserved.
+4. Type an instruction such as **Expand on this**, **Explain this simply**, or **Summarise this**, choose the model/privacy mode, and press **Send**.
+
+On iPhone/iPad, add the command once under **Settings → Mobile → Manage toolbar options → Add global command** (or use the toolbar's configuration button). Search for **OpenRouter Chat: Add selection to chat**. Then selecting text and tapping that toolbar action opens chat with the passage attached. See [Obsidian's mobile toolbar instructions](https://obsidian.md/help/mobile).
+
+Attaching text makes no model request. Only the captured selection and your instruction are added to the next chat request, alongside existing conversation history and the system message; the note's filename, path, and unselected contents are not included. One selection can be staged at a time. Remove or send it before adding another, and wait for a pending answer or press Stop before attaching a new passage.
+
+Successful exchanges retain the passage as conversation context for follow-ups. Sensitive notes protects the combined request and locks that history as usual. Clear chat discards both staged selections and sent history. The attachment is kept only in memory, captures the text as it was when selected, and does not edit the source note. To replace note text directly, use the separate **Generate from selection and insert response** command.
+
 ## Sensitive notes
 
 **Sensitive notes (require ZDR)** is off by default. Turn it on in chat or the selection prompt before sending sensitive text. Each request made with it enabled requires Zero Data Retention model hosts, denies provider data collection, and explicitly disables OpenRouter web search and response caching. It works with streaming and non-streaming responses.

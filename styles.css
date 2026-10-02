@@ -7,7 +7,10 @@
   overflow: hidden;
 }
 .openrouter-chat-header {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 45%;
+  overflow-y: auto;
   padding: 12px;
   border-bottom: 1px solid var(--background-modifier-border);
 }
@@ -40,8 +43,14 @@
 .openrouter-response-metrics { margin-top: 8px; font-size: var(--font-ui-smaller); color: var(--text-muted); }
 .openrouter-response-metrics summary { cursor: pointer; }
 .openrouter-response-metrics div { margin-top: 4px; white-space: pre-wrap; }
-.openrouter-input-container { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--background-modifier-border); padding: 12px; }
+.openrouter-input-container { flex: 0 1 auto; min-height: 0; max-height: 55%; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--background-modifier-border); padding: 12px; }
 .openrouter-input { width: 100%; min-height: 70px; max-height: 220px; resize: vertical; }
+.openrouter-attached-selection { border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 8px; }
+.openrouter-selection-details { white-space: normal; min-width: 0; }
+.openrouter-selection-details summary { cursor: pointer; font-weight: var(--font-semibold); }
+.openrouter-selection-preview { white-space: pre-wrap; overflow-wrap: anywhere; overflow-y: auto; max-height: 120px; margin-top: 6px; font-size: var(--font-ui-small); }
+.openrouter-remove-selection { margin-top: 6px; }
+.openrouter-message-content > .openrouter-selection-details { margin-bottom: 8px; }
 .openrouter-chat-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .openrouter-send-button,
 .openrouter-modal-generate { background: var(--interactive-accent); color: var(--text-on-accent); }

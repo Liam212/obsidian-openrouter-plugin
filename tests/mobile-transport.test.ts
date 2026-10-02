@@ -169,7 +169,7 @@ describe('mobile plugin integration', () => {
     Platform.isMobileApp = mobile;
     const app = {
       secretStorage: { getSecret: () => 'dummy-key', setSecret: vi.fn() },
-      workspace: { detachLeavesOfType: vi.fn() }
+      workspace: { detachLeavesOfType: vi.fn(), on: vi.fn() }
     } as unknown as App;
     const plugin = new OpenRouterPlugin(app, { id: 'openrouter' } as PluginManifest);
     vi.mocked(plugin.loadData).mockResolvedValue({ secretName: 'openrouter-api-key', useStreaming: true });

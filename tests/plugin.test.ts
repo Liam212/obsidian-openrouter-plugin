@@ -12,7 +12,7 @@ function app(): App {
   const secrets = new Map<string, string>();
   return {
     secretStorage: { getSecret: (name: string) => secrets.get(name) ?? null, setSecret: (name: string, value: string) => secrets.set(name, value) },
-    workspace: { detachLeavesOfType: vi.fn() }
+    workspace: { detachLeavesOfType: vi.fn(), on: vi.fn() }
   } as unknown as App;
 }
 
@@ -26,7 +26,7 @@ describe('plugin integration', () => {
     const plugin = new OpenRouterPlugin(app(), manifest);
     await plugin.onload();
     expect(plugin.registerView).toHaveBeenCalled();
-    expect(plugin.addCommand).toHaveBeenCalledTimes(3);
+    expect(plugin.addCommand).toHaveBeenCalledTimes(4);
     expect(fetcher).toHaveBeenCalledOnce();
     plugin.onunload();
     expect(fetcher.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);

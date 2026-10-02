@@ -20,6 +20,8 @@ export class ChatView extends ItemView {
   private epoch = 0;
   private closed = false;
   private activeResponse: HTMLElement | null = null;
+  private selection: string | null = null;
+  private selectionContainer!: HTMLElement;
 
   constructor(leaf: WorkspaceLeaf, private host: PluginHost) {
     super(leaf);
@@ -61,6 +63,9 @@ export class ChatView extends ItemView {
     this.messages = element(this.contentEl, 'div', 'openrouter-messages-container');
     this.messages.setAttribute('aria-label', 'Conversation');
     const input = element(this.contentEl, 'div', 'openrouter-input-container');
+    this.selectionContainer = element(input, 'div', 'openrouter-attached-selection');
+    this.selectionContainer.setAttribute('aria-label', 'Attached selection');
+    this.renderAttachedSelection();
     this.textarea = element(input, 'textarea', 'openrouter-input');
     this.textarea.placeholder = 'Type your message…';
     this.textarea.setAttribute('aria-label', 'Message');
@@ -100,6 +105,43 @@ export class ChatView extends ItemView {
 
   private scroll(): void { this.messages.scrollTop = this.messages.scrollHeight; }
 
+  /** Stage only the explicit selection in memory; never send on attachment. */
+  addSelection(text: string): boolean {
+    if (this.closed || !this.textarea || !text.trim()) return false;
+    if (this.conversation.busy) {
+      new Notice('Wait for the response or press Stop before attaching a selection.');
+      return false;
+    }
+    if (this.selection !== null) {
+      new Notice('A selection is already attached. Send or remove it before adding another.');
+      return false;
+    }
+    this.selection = text;
+    this.renderAttachedSelection();
+    this.textarea.focus();
+    return true;
+  }
+
+  private selectionPreview(parent: HTMLElement, text: string): void {
+    const details = element(parent, 'details', 'openrouter-selection-details');
+    element(details, 'summary', '', 'Selected text');
+    element(details, 'div', 'openrouter-selection-preview', text);
+  }
+
+  private renderAttachedSelection(): void {
+    this.selectionContainer.replaceChildren();
+    this.selectionContainer.hidden = this.selection === null;
+    if (this.textarea) this.textarea.placeholder = this.selection === null ? 'Type your message…' : 'Ask about the selected text…';
+    if (this.selection === null) return;
+    this.selectionPreview(this.selectionContainer, this.selection);
+    button(this.selectionContainer, 'Remove selection', 'openrouter-remove-selection', () => {
+      this.selection = null;
+      this.renderAttachedSelection();
+      this.textarea.focus();
+    });
+    element(this.selectionContainer, 'p', 'openrouter-privacy-hint', 'Included with your next message. Type an instruction below, then press Send.');
+  }
+
   private stop(): void {
     this.epoch++;
     this.conversation.cancel();
@@ -113,18 +155,26 @@ export class ChatView extends ItemView {
     this.conversation.clear();
     this.activeResponse = null;
     this.messages.replaceChildren();
+    this.selection = null;
+    this.renderAttachedSelection();
     this.setBusy(false);
   }
 
   async send(): Promise<void> {
-    const content = this.textarea.value.trim();
-    if (!content || this.conversation.busy || this.closed) return;
+    const instruction = this.textarea.value.trim();
+    if (!instruction || this.conversation.busy || this.closed) return;
     if (!this.picker.value) { new Notice('Choose an available model first.'); return; }
     const epoch = ++this.epoch;
     const model = this.picker.value;
     const sensitiveNotes = this.sensitiveNotes.enabled;
+    const selection = this.selection;
+    const content = selection === null ? instruction : `Selected text (context):\n\n${selection}\n\nMy instruction:\n${instruction}`;
+    this.selection = null;
+    this.renderAttachedSelection();
     this.textarea.value = '';
-    renderMessage(content, this.message('User').content);
+    const user = this.message('User').content;
+    if (selection !== null) this.selectionPreview(user, selection);
+    renderMessage(instruction, element(user, 'div'));
     const answer = this.message('Assistant');
     answer.content.textContent = 'Thinking…';
     this.activeResponse = answer.content;
@@ -144,7 +194,12 @@ export class ChatView extends ItemView {
     } catch (error) {
       if (this.epoch !== epoch || this.closed) return;
       answer.content.textContent = isAbort(error) ? 'Cancelled.' : `${errorMessage(error)} This exchange was not added to the conversation context.`;
-      if (!this.textarea.value) this.textarea.value = content;
+      // Restore the failed draft only if the user has not started a new one.
+      if (!this.textarea.value && this.selection === null) {
+        this.textarea.value = instruction;
+        this.selection = selection;
+        this.renderAttachedSelection();
+      }
     } finally {
       if (this.epoch === epoch && !this.closed) {
         this.activeResponse = null;
@@ -177,6 +232,7 @@ export class ChatView extends ItemView {
     this.conversation.clear();
     this.picker?.destroy();
     this.activeResponse = null;
+    this.selection = null;
     this.contentEl.replaceChildren();
   }
 }
